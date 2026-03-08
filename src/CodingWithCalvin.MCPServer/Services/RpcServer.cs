@@ -192,4 +192,76 @@ public class RpcServer : IRpcServer, IVisualStudioRpc
         => _vsService.GoToDefinitionAsync(path, line, column);
     public Task<ReferencesResult> FindReferencesAsync(string path, int line, int column, int maxResults = 100)
         => _vsService.FindReferencesAsync(path, line, column, maxResults);
+
+    // Debugger Control
+    public Task<DebugState> GetDebugStateAsync() => _vsService.GetDebugStateAsync();
+    public Task<bool> StartDebuggingAsync() => _vsService.StartDebuggingAsync();
+    public Task<bool> StopDebuggingAsync() => _vsService.StopDebuggingAsync();
+    public Task<bool> ContinueDebuggingAsync() => _vsService.ContinueDebuggingAsync();
+    public Task<bool> StepIntoAsync() => _vsService.StepIntoAsync();
+    public Task<bool> StepOverAsync() => _vsService.StepOverAsync();
+    public Task<bool> StepOutAsync() => _vsService.StepOutAsync();
+    public Task<bool> RunToCursorAsync(string filePath, int line) => _vsService.RunToCursorAsync(filePath, line);
+
+    // Breakpoints
+    public Task<List<BreakpointInfo>> GetBreakpointsAsync() => _vsService.GetBreakpointsAsync();
+    public Task<BreakpointInfo?> SetBreakpointAsync(SetBreakpointRequest request) => _vsService.SetBreakpointAsync(request);
+    public Task<bool> RemoveBreakpointAsync(string filePath, int line) => _vsService.RemoveBreakpointAsync(filePath, line);
+    public Task<bool> ToggleBreakpointAsync(string filePath, int line) => _vsService.ToggleBreakpointAsync(filePath, line);
+    public Task<bool> SetBreakpointConditionAsync(string filePath, int line, string? condition, int hitCount, string hitCountType)
+        => _vsService.SetBreakpointConditionAsync(filePath, line, condition, hitCount, hitCountType);
+
+    // Variable Inspection
+    public Task<EvaluationResult> EvaluateExpressionAsync(string expression) => _vsService.EvaluateExpressionAsync(expression);
+    public Task<List<VariableInfo>> GetLocalsAsync() => _vsService.GetLocalsAsync();
+    public Task<List<VariableInfo>> GetArgumentsAsync() => _vsService.GetArgumentsAsync();
+    public Task<VariableInfo> InspectVariableAsync(string variableName, int depth = 1)
+        => _vsService.InspectVariableAsync(variableName, depth);
+    public Task<bool> SetVariableValueAsync(string variableName, string value)
+        => _vsService.SetVariableValueAsync(variableName, value);
+
+    // Watch Window
+    public Task<List<WatchItem>> GetWatchExpressionsAsync() => _vsService.GetWatchExpressionsAsync();
+    public Task<bool> AddWatchExpressionAsync(string expression) => _vsService.AddWatchExpressionAsync(expression);
+    public Task<bool> RemoveWatchExpressionAsync(string expression) => _vsService.RemoveWatchExpressionAsync(expression);
+    public Task<bool> ClearWatchExpressionsAsync() => _vsService.ClearWatchExpressionsAsync();
+
+    // Call Stack & Threads
+    public Task<List<StackFrameInfo>> GetCallStackAsync() => _vsService.GetCallStackAsync();
+    public Task<bool> SetActiveStackFrameAsync(int frameIndex) => _vsService.SetActiveStackFrameAsync(frameIndex);
+    public Task<List<ThreadInfo>> GetThreadsAsync() => _vsService.GetThreadsAsync();
+    public Task<bool> SetActiveThreadAsync(int threadId) => _vsService.SetActiveThreadAsync(threadId);
+
+    // Diagnostics
+    public Task<List<DiagnosticInfo>> GetDiagnosticsAsync(string? filePath = null, string? severity = null)
+        => _vsService.GetDiagnosticsAsync(filePath, severity);
+    public Task<List<DiagnosticInfo>> GetErrorListAsync() => _vsService.GetErrorListAsync();
+    public Task<CodeFixResult> ApplyCodeFixAsync(ApplyCodeFixRequest request) => _vsService.ApplyCodeFixAsync(request);
+    public Task<List<CodeFixInfo>> GetCodeFixesAsync(string filePath, int line, int column)
+        => _vsService.GetCodeFixesAsync(filePath, line, column);
+
+    // Testing
+    public Task<List<TestInfo>> DiscoverTestsAsync(string? projectName = null) => _vsService.DiscoverTestsAsync(projectName);
+    public Task<TestRunSummary> RunAllTestsAsync(string? projectName = null) => _vsService.RunAllTestsAsync(projectName);
+    public Task<TestRunSummary> RunTestsAsync(RunTestsRequest request) => _vsService.RunTestsAsync(request);
+    public Task<TestRunSummary> GetTestResultsAsync() => _vsService.GetTestResultsAsync();
+    public Task<bool> DebugTestAsync(string testName) => _vsService.DebugTestAsync(testName);
+
+    // Refactoring
+    public Task<List<string>> RenameSymbolAsync(string filePath, int line, int column, string newName)
+        => _vsService.RenameSymbolAsync(filePath, line, column, newName);
+    public Task<string?> ExtractMethodAsync(string filePath, int startLine, int startColumn, int endLine, int endColumn, string newMethodName)
+        => _vsService.ExtractMethodAsync(filePath, startLine, startColumn, endLine, endColumn, newMethodName);
+    public Task<string?> OrganizeUsingsAsync(string filePath, bool placeSystemFirst = true)
+        => _vsService.OrganizeUsingsAsync(filePath, placeSystemFirst);
+
+    // Output Windows
+    public Task<string> GetBuildOutputAsync() => _vsService.GetBuildOutputAsync();
+    public Task<string> GetDebugOutputAsync() => _vsService.GetDebugOutputAsync();
+
+    // Project Operations
+    public Task<bool> AddFileToProjectAsync(string projectPath, string filePath)
+        => _vsService.AddFileToProjectAsync(projectPath, filePath);
+    public Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null)
+        => _vsService.CreateProjectItemAsync(projectPath, itemTemplate, itemName, folderPath);
 }

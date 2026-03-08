@@ -35,4 +35,66 @@ public interface IVisualStudioService
     Task<WorkspaceSymbolResult> SearchWorkspaceSymbolsAsync(string query, int maxResults = 100);
     Task<DefinitionResult> GoToDefinitionAsync(string path, int line, int column);
     Task<ReferencesResult> FindReferencesAsync(string path, int line, int column, int maxResults = 100);
+
+    // Debugger Control
+    Task<DebugState> GetDebugStateAsync();
+    Task<bool> StartDebuggingAsync();
+    Task<bool> StopDebuggingAsync();
+    Task<bool> ContinueDebuggingAsync();
+    Task<bool> StepIntoAsync();
+    Task<bool> StepOverAsync();
+    Task<bool> StepOutAsync();
+    Task<bool> RunToCursorAsync(string filePath, int line);
+
+    // Breakpoints
+    Task<List<BreakpointInfo>> GetBreakpointsAsync();
+    Task<BreakpointInfo?> SetBreakpointAsync(SetBreakpointRequest request);
+    Task<bool> RemoveBreakpointAsync(string filePath, int line);
+    Task<bool> ToggleBreakpointAsync(string filePath, int line);
+    Task<bool> SetBreakpointConditionAsync(string filePath, int line, string? condition, int hitCount, string hitCountType);
+
+    // Variable Inspection
+    Task<EvaluationResult> EvaluateExpressionAsync(string expression);
+    Task<List<VariableInfo>> GetLocalsAsync();
+    Task<List<VariableInfo>> GetArgumentsAsync();
+    Task<VariableInfo> InspectVariableAsync(string variableName, int depth = 1);
+    Task<bool> SetVariableValueAsync(string variableName, string value);
+
+    // Watch Window
+    Task<List<WatchItem>> GetWatchExpressionsAsync();
+    Task<bool> AddWatchExpressionAsync(string expression);
+    Task<bool> RemoveWatchExpressionAsync(string expression);
+    Task<bool> ClearWatchExpressionsAsync();
+
+    // Call Stack & Threads
+    Task<List<StackFrameInfo>> GetCallStackAsync();
+    Task<bool> SetActiveStackFrameAsync(int frameIndex);
+    Task<List<ThreadInfo>> GetThreadsAsync();
+    Task<bool> SetActiveThreadAsync(int threadId);
+
+    // Diagnostics
+    Task<List<DiagnosticInfo>> GetDiagnosticsAsync(string? filePath = null, string? severity = null);
+    Task<List<DiagnosticInfo>> GetErrorListAsync();
+    Task<CodeFixResult> ApplyCodeFixAsync(ApplyCodeFixRequest request);
+    Task<List<CodeFixInfo>> GetCodeFixesAsync(string filePath, int line, int column);
+
+    // Testing
+    Task<List<TestInfo>> DiscoverTestsAsync(string? projectName = null);
+    Task<TestRunSummary> RunAllTestsAsync(string? projectName = null);
+    Task<TestRunSummary> RunTestsAsync(RunTestsRequest request);
+    Task<TestRunSummary> GetTestResultsAsync();
+    Task<bool> DebugTestAsync(string testName);
+
+    // Refactoring
+    Task<List<string>> RenameSymbolAsync(string filePath, int line, int column, string newName);
+    Task<string?> ExtractMethodAsync(string filePath, int startLine, int startColumn, int endLine, int endColumn, string newMethodName);
+    Task<string?> OrganizeUsingsAsync(string filePath, bool placeSystemFirst = true);
+
+    // Output Windows
+    Task<string> GetBuildOutputAsync();
+    Task<string> GetDebugOutputAsync();
+
+    // Project Operations
+    Task<bool> AddFileToProjectAsync(string projectPath, string filePath);
+    Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null);
 }

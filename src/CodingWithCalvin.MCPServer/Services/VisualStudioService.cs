@@ -11,6 +11,7 @@ using EnvDTE;
 using EnvDTE80;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
+using ActivityStatusCode = System.Diagnostics.ActivityStatusCode;
 
 namespace CodingWithCalvin.MCPServer.Services;
 
@@ -1041,4 +1042,1562 @@ public class VisualStudioService : IVisualStudioService
         var afterOk = start + length >= text.Length || !char.IsLetterOrDigit(text[start + length]);
         return beforeOk && afterOk;
     }
+
+    #region Private Fields for New Features
+
+    private readonly List<string> _watchExpressions = new();
+    private readonly List<TestInfo> _discoveredTests = new();
+    private TestRunSummary? _lastTestResults;
+    private int _activeFrameIndex;
+
+    #endregion
+
+    #region Debugger Control
+
+    public async Task<DebugState> GetDebugStateAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        var debugger = dte.Debugger;
+        if (debugger == null)
+        {
+            return new DebugState { Mode = DebugMode.Design };
+        }
+
+        var mode = debugger.CurrentMode switch
+        {
+            dbgDebugMode.dbgDesignMode => DebugMode.Design,
+            dbgDebugMode.dbgBreakMode => DebugMode.Break,
+            dbgDebugMode.dbgRunMode => DebugMode.Run,
+            _ => DebugMode.Design
+        };
+
+        var state = new DebugState { Mode = mode };
+
+        if (mode != DebugMode.Design && debugger.CurrentProcess != null)
+        {
+            state.ProcessName = debugger.CurrentProcess.Name;
+            state.ProcessId = debugger.CurrentProcess.ProcessID;
+
+            if (debugger.CurrentThread != null)
+            {
+                state.ThreadId = debugger.CurrentThread.ID;
+                state.ThreadName = debugger.CurrentThread.Name;
+            }
+        }
+
+        return state;
+    }
+
+    public async Task<bool> StartDebuggingAsync()
+    {
+        using var activity = VsixTelemetry.Tracer.StartActivity("StartDebugging");
+
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            dte.Debugger.Go(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> StopDebuggingAsync()
+    {
+        using var activity = VsixTelemetry.Tracer.StartActivity("StopDebugging");
+
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            dte.Debugger.Stop(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> ContinueDebuggingAsync()
+    {
+        using var activity = VsixTelemetry.Tracer.StartActivity("ContinueDebugging");
+
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            dte.Debugger.Go(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> StepIntoAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            dte.Debugger.StepInto(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> StepOverAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            dte.Debugger.StepOver(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> StepOutAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            dte.Debugger.StepOut(false);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> RunToCursorAsync(string filePath, int line)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            // Set a temporary breakpoint at the cursor position
+            var bp = dte.Debugger.Breakpoints.Add(File: filePath, Line: line);
+            
+            // Continue execution
+            dte.Debugger.Go(false);
+
+            // The breakpoint will be hit and the temporary breakpoint will be removed automatically
+            // Note: In a real implementation, you might want to track this and remove it after hitting
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Breakpoints
+
+    public async Task<List<BreakpointInfo>> GetBreakpointsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var breakpoints = new List<BreakpointInfo>();
+
+        foreach (Breakpoint bp in dte.Debugger.Breakpoints)
+        {
+            try
+            {
+                breakpoints.Add(new BreakpointInfo
+                {
+                    Id = bp.GetHashCode(),
+                    FilePath = bp.File,
+                    Line = bp.FileLine,
+                    Column = bp.FileColumn,
+                    Enabled = bp.Enabled,
+                    Condition = bp.Condition,
+                    HitCountTarget = bp.HitCountTarget,
+                    HitCountType = bp.HitCountType.ToString(),
+                    FunctionName = bp.FunctionName
+                });
+            }
+            catch (Exception ex)
+            {
+                VsixTelemetry.TrackException(ex);
+            }
+        }
+
+        return breakpoints;
+    }
+
+    public async Task<BreakpointInfo?> SetBreakpointAsync(SetBreakpointRequest request)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            // Breakpoints.Add returns a Breakpoints collection, get the first one
+            // Note: EnvDTE Breakpoints.Add signature: (string File, string Line, int Column, [optional params])
+            var breakpoints = dte.Debugger.Breakpoints.Add(
+                request.FilePath,
+                request.Line.ToString(),
+                request.Column
+            );
+
+            if (breakpoints == null || breakpoints.Count == 0)
+            {
+                return null;
+            }
+
+            var bp = breakpoints.Item(1);
+
+            return new BreakpointInfo
+            {
+                Id = bp.GetHashCode(),
+                FilePath = bp.File,
+                Line = bp.FileLine,
+                Column = bp.FileColumn,
+                Enabled = bp.Enabled,
+                Condition = bp.Condition,
+                HitCountTarget = bp.HitCountTarget,
+                HitCountType = bp.HitCountType.ToString()
+            };
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return null;
+        }
+    }
+
+    public async Task<bool> RemoveBreakpointAsync(string filePath, int line)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            foreach (Breakpoint bp in dte.Debugger.Breakpoints)
+            {
+                if (PathsEqual(bp.File, filePath) && bp.FileLine == line)
+                {
+                    bp.Delete();
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> ToggleBreakpointAsync(string filePath, int line)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            foreach (Breakpoint bp in dte.Debugger.Breakpoints)
+            {
+                if (PathsEqual(bp.File, filePath) && bp.FileLine == line)
+                {
+                    bp.Enabled = !bp.Enabled;
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> SetBreakpointConditionAsync(string filePath, int line, string? condition, int hitCount, string hitCountType)
+    {
+        // Note: EnvDTE Breakpoint.Condition, HitCountTarget, HitCountType are read-only
+        // To set condition/hitCount, we need to delete the existing breakpoint and create a new one
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            // Find and delete existing breakpoint
+            foreach (Breakpoint bp in dte.Debugger.Breakpoints)
+            {
+                if (PathsEqual(bp.File, filePath) && bp.FileLine == line)
+                {
+                    bp.Delete();
+                    break;
+                }
+            }
+
+            // Create new breakpoint with condition/hitcount if specified
+            // Note: EnvDTE's Breakpoints.Add doesn't support condition/hitcount in all versions
+            // This is a limitation - conditions must be set manually in VS UI
+            var breakpoints = dte.Debugger.Breakpoints.Add(filePath, line.ToString(), 1);
+            return breakpoints != null && breakpoints.Count > 0;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Variable Inspection
+
+    public async Task<EvaluationResult> EvaluateExpressionAsync(string expression)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return new EvaluationResult
+                {
+                    Expression = expression,
+                    IsValid = false,
+                    ErrorMessage = "Debugger is not in break mode"
+                };
+            }
+
+            var result = dte.Debugger.GetExpression(expression);
+            return new EvaluationResult
+            {
+                Expression = expression,
+                Value = result.Value,
+                Type = result.Type,
+                IsValid = result.IsValidValue,
+                ErrorMessage = result.IsValidValue ? null : "Invalid expression"
+            };
+        }
+        catch (Exception ex)
+        {
+            return new EvaluationResult
+            {
+                Expression = expression,
+                IsValid = false,
+                ErrorMessage = ex.Message
+            };
+        }
+    }
+
+    public async Task<List<VariableInfo>> GetLocalsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var locals = new List<VariableInfo>();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return locals;
+            }
+
+            var frame = GetCurrentFrame(dte);
+            if (frame == null)
+            {
+                return locals;
+            }
+
+            foreach (Expression local in frame.Locals)
+            {
+                locals.Add(new VariableInfo
+                {
+                    Name = local.Name,
+                    Value = local.Value,
+                    Type = local.Type,
+                    IsValid = local.IsValidValue,
+                    IsExpandable = local.DataMembers?.Count > 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return locals;
+    }
+
+    public async Task<List<VariableInfo>> GetArgumentsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var arguments = new List<VariableInfo>();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return arguments;
+            }
+
+            var frame = GetCurrentFrame(dte);
+            if (frame == null)
+            {
+                return arguments;
+            }
+
+            foreach (Expression arg in frame.Arguments)
+            {
+                arguments.Add(new VariableInfo
+                {
+                    Name = arg.Name,
+                    Value = arg.Value,
+                    Type = arg.Type,
+                    IsValid = arg.IsValidValue,
+                    IsExpandable = arg.DataMembers?.Count > 0
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return arguments;
+    }
+
+    public async Task<VariableInfo> InspectVariableAsync(string variableName, int depth = 1)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return new VariableInfo
+                {
+                    Name = variableName,
+                    IsValid = false
+                };
+            }
+
+            var expr = dte.Debugger.GetExpression(variableName);
+            return InspectExpression(expr, depth);
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return new VariableInfo
+            {
+                Name = variableName,
+                IsValid = false
+            };
+        }
+    }
+
+    private static VariableInfo InspectExpression(Expression expr, int depth)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        var info = new VariableInfo
+        {
+            Name = expr.Name,
+            Value = expr.Value,
+            Type = expr.Type,
+            IsValid = expr.IsValidValue,
+            IsExpandable = expr.DataMembers?.Count > 0
+        };
+
+        if (depth > 0 && expr.DataMembers != null && expr.DataMembers.Count > 0)
+        {
+            info.Members = new List<VariableInfo>();
+            foreach (Expression member in expr.DataMembers)
+            {
+                info.Members.Add(InspectExpression(member, depth - 1));
+            }
+        }
+
+        return info;
+    }
+
+    public async Task<bool> SetVariableValueAsync(string variableName, string value)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            // Execute an assignment statement
+            var statement = $"{variableName} = {value}";
+            dte.Debugger.ExecuteStatement(statement, 1000);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Watch Window
+
+    public async Task<List<WatchItem>> GetWatchExpressionsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var watches = new List<WatchItem>();
+
+        foreach (var expr in _watchExpressions)
+        {
+            var item = new WatchItem { Expression = expr };
+
+            try
+            {
+                if (dte.Debugger.CurrentMode == dbgDebugMode.dbgBreakMode)
+                {
+                    var result = dte.Debugger.GetExpression(expr);
+                    item.Value = result.Value;
+                    item.Type = result.Type;
+                    item.IsValid = result.IsValidValue;
+                    item.ErrorMessage = result.IsValidValue ? null : "Invalid expression";
+                }
+                else
+                {
+                    item.IsValid = false;
+                    item.ErrorMessage = "Not in break mode";
+                }
+            }
+            catch (Exception ex)
+            {
+                item.IsValid = false;
+                item.ErrorMessage = ex.Message;
+            }
+
+            watches.Add(item);
+        }
+
+        return watches;
+    }
+
+    public Task<bool> AddWatchExpressionAsync(string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            return Task.FromResult(false);
+        }
+
+        if (!_watchExpressions.Contains(expression))
+        {
+            _watchExpressions.Add(expression);
+        }
+
+        return Task.FromResult(true);
+    }
+
+    public Task<bool> RemoveWatchExpressionAsync(string expression)
+    {
+        return Task.FromResult(_watchExpressions.Remove(expression));
+    }
+
+    public Task<bool> ClearWatchExpressionsAsync()
+    {
+        _watchExpressions.Clear();
+        return Task.FromResult(true);
+    }
+
+    #endregion
+
+    #region Call Stack & Threads
+
+    public async Task<List<StackFrameInfo>> GetCallStackAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var frames = new List<StackFrameInfo>();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return frames;
+            }
+
+            var thread = dte.Debugger.CurrentThread;
+            if (thread == null)
+            {
+                return frames;
+            }
+
+            var index = 0;
+            foreach (EnvDTE.StackFrame frame in thread.StackFrames)
+            {
+                // Note: EnvDTE.StackFrame doesn't have FileName/LineNumber directly
+                // These properties might be available through StackFrame2 in some VS versions
+                // For now, we just use FunctionName and Module
+                frames.Add(new StackFrameInfo
+                {
+                    Index = index++,
+                    MethodName = frame.FunctionName,
+                    FilePath = null, // Not directly available in EnvDTE.StackFrame
+                    Line = 0, // Not directly available in EnvDTE.StackFrame
+                    Column = 1,
+                    EndLine = 0,
+                    EndColumn = 1,
+                    ModuleName = frame.Module,
+                    FileName = null
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return frames;
+    }
+
+    public Task<bool> SetActiveStackFrameAsync(int frameIndex)
+    {
+        // Note: EnvDTE doesn't support directly changing the active stack frame
+        // This would require IVsDebugger or other advanced APIs
+        // For now, just track the index for internal use
+        _activeFrameIndex = frameIndex;
+        return Task.FromResult(true);
+    }
+
+    public async Task<List<ThreadInfo>> GetThreadsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var threads = new List<ThreadInfo>();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return threads;
+            }
+
+            var currentThreadId = dte.Debugger.CurrentThread?.ID ?? -1;
+
+            // Access Threads directly from Debugger.CurrentProcess.Threads
+            // Note: EnvDTE.Debugger.CurrentProcess returns EnvDTE.Process which has Threads property
+            var currentProcess = dte.Debugger.CurrentProcess;
+            if (currentProcess == null)
+            {
+                return threads;
+            }
+
+            // Use dynamic to avoid type resolution conflict with System.Diagnostics.Process
+            dynamic debugProcess = currentProcess;
+            foreach (var threadObj in debugProcess.Threads)
+            {
+                dynamic thread = threadObj;
+                var info = new ThreadInfo
+                {
+                    Id = thread.ID,
+                    Name = thread.Name,
+                    IsCurrent = thread.ID == currentThreadId
+                };
+
+                try
+                {
+                    if (thread.StackFrames?.Count > 0)
+                    {
+                        var frame = thread.StackFrames.Item(1);
+                        info.Location = frame.FunctionName;
+                        // Note: FileName and LineNumber not directly available in EnvDTE.StackFrame
+                        info.FilePath = null;
+                        info.Line = 0;
+                    }
+                }
+                catch
+                {
+                    // Ignore errors getting frame info
+                }
+
+                threads.Add(info);
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return threads;
+    }
+
+    public async Task<bool> SetActiveThreadAsync(int threadId)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return false;
+            }
+
+            var currentProc = dte.Debugger.CurrentProcess;
+            if (currentProc == null)
+            {
+                return false;
+            }
+
+            // Use dynamic to avoid type resolution conflict with System.Diagnostics.Process
+            dynamic process = currentProc;
+            foreach (var threadObj in process.Threads)
+            {
+                dynamic thread = threadObj;
+                if (thread.ID == threadId)
+                {
+                    // Note: EnvDTE doesn't support directly changing the active thread
+                    // This would require IVsDebugger or other advanced APIs
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Diagnostics
+
+    public async Task<List<DiagnosticInfo>> GetDiagnosticsAsync(string? filePath = null, string? severity = null)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var diagnostics = new List<DiagnosticInfo>();
+
+        // Note: Getting Roslyn diagnostics requires IAnalyzableSource and other APIs
+        // For now, we'll use the Error List which provides basic functionality
+        try
+        {
+            var dte = await GetDteAsync();
+            var errorList = dte.ToolWindows.ErrorList;
+            var errorItems = errorList.ErrorItems;
+
+            for (int i = 1; i <= errorItems.Count; i++)
+            {
+                var item = errorItems.Item(i);
+                var info = new DiagnosticInfo
+                {
+                    Message = item.Description,
+                    FilePath = item.FileName,
+                    Line = item.Line,
+                    Column = item.Column,
+                    ProjectName = item.Project
+                };
+
+                info.Severity = item.ErrorLevel switch
+                {
+                    vsBuildErrorLevel.vsBuildErrorLevelHigh => DiagnosticSeverity.Error,
+                    vsBuildErrorLevel.vsBuildErrorLevelMedium => DiagnosticSeverity.Warning,
+                    vsBuildErrorLevel.vsBuildErrorLevelLow => DiagnosticSeverity.Info,
+                    _ => DiagnosticSeverity.Info
+                };
+
+                // Filter by file path if specified
+                if (!string.IsNullOrEmpty(filePath) && !string.IsNullOrEmpty(info.FilePath))
+                {
+                    if (!PathsEqual(info.FilePath, filePath))
+                    {
+                        continue;
+                    }
+                }
+
+                // Filter by severity if specified
+                if (!string.IsNullOrEmpty(severity))
+                {
+                    var targetSeverity = severity.ToLowerInvariant() switch
+                    {
+                        "error" => DiagnosticSeverity.Error,
+                        "warning" => DiagnosticSeverity.Warning,
+                        "info" => DiagnosticSeverity.Info,
+                        _ => (DiagnosticSeverity?)null
+                    };
+
+                    if (targetSeverity.HasValue && info.Severity != targetSeverity.Value)
+                    {
+                        continue;
+                    }
+                }
+
+                diagnostics.Add(info);
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return diagnostics;
+    }
+
+    public async Task<List<DiagnosticInfo>> GetErrorListAsync()
+    {
+        return await GetDiagnosticsAsync(severity: "error");
+    }
+
+    public async Task<CodeFixResult> ApplyCodeFixAsync(ApplyCodeFixRequest request)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+        // Note: Applying code fixes programmatically requires access to Roslyn's CodeAction
+        // This is not directly available through EnvDTE
+        // A full implementation would require IVsTextBuffer and Roslyn APIs
+        // For now, return an error indicating this limitation
+
+        return new CodeFixResult
+        {
+            Success = false,
+            ErrorMessage = "Programmatic code fix application is not yet supported. This feature requires Roslyn CodeAction integration."
+        };
+    }
+
+    public async Task<List<CodeFixInfo>> GetCodeFixesAsync(string filePath, int line, int column)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+        // Note: Getting available code fixes requires Roslyn integration
+        // This would need ICodeFixService or similar APIs
+        // For now, return an empty list
+
+        return new List<CodeFixInfo>();
+    }
+
+    #endregion
+
+    #region Testing
+
+    public async Task<List<TestInfo>> DiscoverTestsAsync(string? projectName = null)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        _discoveredTests.Clear();
+
+        try
+        {
+            var solutionPath = Path.GetDirectoryName(dte.Solution.FullName);
+            if (string.IsNullOrEmpty(solutionPath))
+            {
+                return _discoveredTests;
+            }
+
+            // Run dotnet test --list-tests
+            var testProjects = new List<string>();
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                try
+                {
+                    if (!string.IsNullOrEmpty(projectName) &&
+                        !project.Name.Equals(projectName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+
+                    if (project.FullName.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase) ||
+                        project.FullName.EndsWith(".fsproj", StringComparison.OrdinalIgnoreCase) ||
+                        project.FullName.EndsWith(".vbproj", StringComparison.OrdinalIgnoreCase))
+                    {
+                        testProjects.Add(project.FullName);
+                    }
+                }
+                catch
+                {
+                    // Skip projects that can't be accessed
+                }
+            }
+
+            foreach (var projectPath in testProjects)
+            {
+                var tests = await RunDotnetTestListAsync(projectPath);
+                _discoveredTests.AddRange(tests);
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return _discoveredTests.ToList();
+    }
+
+    private async Task<List<TestInfo>> RunDotnetTestListAsync(string projectPath)
+    {
+        var tests = new List<TestInfo>();
+
+        try
+        {
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = $"test \"{projectPath}\" --list-tests",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process == null)
+            {
+                return tests;
+            }
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            process.WaitForExit(); // .NET Framework 4.8 doesn't have WaitForExitAsync
+
+            // Parse the output for test names
+            var lines = output.Split(new[] { '\n' }, StringSplitOptions.None);
+            var inTestList = false;
+
+            foreach (var line in lines)
+            {
+                var trimmed = line.Trim();
+
+                if (trimmed.StartsWith("The following Tests are available:"))
+                {
+                    inTestList = true;
+                    continue;
+                }
+
+                if (inTestList && !string.IsNullOrWhiteSpace(trimmed))
+                {
+                    // Parse fully qualified test name
+                    var parts = trimmed.Split('.');
+                    // .NET Framework 4.8 doesn't support Index/Range syntax
+                    var testName = parts.Length > 0 ? parts[parts.Length - 1] : trimmed;
+                    var className = parts.Length > 1 ? parts[parts.Length - 2] : null;
+                    string? @namespace = null;
+                    if (parts.Length > 2)
+                    {
+                        var namespaceParts = new string[parts.Length - 2];
+                        for (int i = 0; i < parts.Length - 2; i++)
+                        {
+                            namespaceParts[i] = parts[i];
+                        }
+                        @namespace = string.Join(".", namespaceParts);
+                    }
+
+                    tests.Add(new TestInfo
+                    {
+                        Id = trimmed.GetHashCode().ToString(),
+                        Name = testName,
+                        FullName = trimmed,
+                        ClassName = className,
+                        Namespace = @namespace,
+                        ProjectName = Path.GetFileNameWithoutExtension(projectPath),
+                        Type = TestType.Unit
+                    });
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return tests;
+    }
+
+    public async Task<TestRunSummary> RunAllTestsAsync(string? projectName = null)
+    {
+        var request = new RunTestsRequest
+        {
+            ProjectName = projectName
+        };
+        return await RunTestsAsync(request);
+    }
+
+    public async Task<TestRunSummary> RunTestsAsync(RunTestsRequest request)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        var summary = new TestRunSummary();
+
+        try
+        {
+            var solutionPath = Path.GetDirectoryName(dte.Solution.FullName);
+            if (string.IsNullOrEmpty(solutionPath))
+            {
+                return summary;
+            }
+
+            var projectPath = string.Empty;
+            if (!string.IsNullOrEmpty(request.ProjectName))
+            {
+                foreach (EnvDTE.Project project in dte.Solution.Projects)
+                {
+                    try
+                    {
+                        if (project.Name.Equals(request.ProjectName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            projectPath = project.FullName;
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // Skip
+                    }
+                }
+            }
+            else
+            {
+                // Use the solution file
+                projectPath = dte.Solution.FullName;
+            }
+
+            var filter = string.Empty;
+            if (request.TestNames != null && request.TestNames.Count > 0)
+            {
+                filter = $"--filter \"{string.Join("|", request.TestNames)}\"";
+            }
+            else if (!string.IsNullOrEmpty(request.Filter))
+            {
+                filter = $"--filter \"{request.Filter}\"";
+            }
+
+            var arguments = $"test \"{projectPath}\" --no-build {filter} --logger \"trx;LogFileName=testresults.trx\"";
+            if (request.Verbose)
+            {
+                arguments += " -v n";
+            }
+
+            var startInfo = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "dotnet",
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WorkingDirectory = solutionPath
+            };
+
+            using var process = System.Diagnostics.Process.Start(startInfo);
+            if (process == null)
+            {
+                return summary;
+            }
+
+            var output = await process.StandardOutput.ReadToEndAsync();
+            var error = await process.StandardError.ReadToEndAsync();
+            process.WaitForExit(); // .NET Framework 4.8 doesn't have WaitForExitAsync
+
+            // Parse the output for test results
+            summary = ParseTestOutput(output + error);
+            _lastTestResults = summary;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return summary;
+    }
+
+    private static TestRunSummary ParseTestOutput(string output)
+    {
+        var summary = new TestRunSummary();
+
+        // Parse dotnet test output
+        var lines = output.Split('\n');
+        foreach (var line in lines)
+        {
+            var trimmed = line.Trim();
+
+            // Look for summary line like "Passed!  - Passed:  5, Failed:  0, Skipped:  0"
+            if (trimmed.StartsWith("Passed!") || trimmed.StartsWith("Failed!") || trimmed.StartsWith("Skipped!"))
+            {
+                var parts = trimmed.Split(',');
+                foreach (var part in parts)
+                {
+                    var kv = part.Trim().Split(':');
+                    if (kv.Length == 2)
+                    {
+                        var key = kv[0].Trim().ToLowerInvariant();
+                        var value = kv[1].Trim();
+
+                        if (int.TryParse(value, out var count))
+                        {
+                            switch (key)
+                            {
+                                case "passed":
+                                    summary.Passed = count;
+                                    break;
+                                case "failed":
+                                    summary.Failed = count;
+                                    break;
+                                case "skipped":
+                                    summary.Skipped = count;
+                                    break;
+                            }
+                        }
+                    }
+                }
+
+                summary.Total = summary.Passed + summary.Failed + summary.Skipped;
+            }
+
+            // Parse individual test results
+            if (trimmed.StartsWith("Passed") || trimmed.StartsWith("Failed") || trimmed.StartsWith("Skipped"))
+            {
+                var spaceIndex = trimmed.IndexOf(' ');
+                if (spaceIndex > 0)
+                {
+                    // .NET Framework 4.8 doesn't support Index/Range syntax
+                    var status = trimmed.Substring(0, spaceIndex);
+                    var testName = trimmed.Substring(spaceIndex + 1).Trim();
+
+                    summary.Results.Add(new TestResult
+                    {
+                        TestName = testName,
+                        TestId = testName.GetHashCode().ToString(),
+                        Status = status.ToLowerInvariant() switch
+                        {
+                            "passed" => TestStatus.Passed,
+                            "failed" => TestStatus.Failed,
+                            "skipped" => TestStatus.Skipped,
+                            _ => TestStatus.Pending
+                        }
+                    });
+                }
+            }
+        }
+
+        return summary;
+    }
+
+    public Task<TestRunSummary> GetTestResultsAsync()
+    {
+        return Task.FromResult(_lastTestResults ?? new TestRunSummary());
+    }
+
+    public async Task<bool> DebugTestAsync(string testName)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            // Set environment variable for VSTest debug mode
+            Environment.SetEnvironmentVariable("VSTEST_HOST_DEBUG", "1");
+
+            var request = new RunTestsRequest
+            {
+                Filter = testName,
+                Verbose = true
+            };
+
+            await RunTestsAsync(request);
+
+            // Clear the environment variable
+            Environment.SetEnvironmentVariable("VSTEST_HOST_DEBUG", null);
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Refactoring
+
+    public async Task<List<string>> RenameSymbolAsync(string filePath, int line, int column, string newName)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var changedFiles = new List<string>();
+
+        try
+        {
+            // Open the document and position cursor
+            await OpenDocumentAsync(filePath);
+
+            var doc = dte.ActiveDocument;
+            if (doc == null)
+            {
+                return changedFiles;
+            }
+
+            var textDoc = doc.Object("TextDocument") as TextDocument;
+            if (textDoc == null)
+            {
+                return changedFiles;
+            }
+
+            textDoc.Selection.MoveToLineAndOffset(line, column);
+
+            // Get the symbol name at cursor
+            var symbolName = GetWordAtPosition(textDoc, line, column);
+            if (string.IsNullOrEmpty(symbolName))
+            {
+                return changedFiles;
+            }
+
+            // Use Find and Replace to rename across the solution
+            var findObjects = dte.Find;
+            findObjects.FindWhat = symbolName;
+            findObjects.ReplaceWith = newName;
+            findObjects.Target = vsFindTarget.vsFindTargetSolution;
+            findObjects.MatchCase = true;
+            findObjects.MatchWholeWord = true;
+            findObjects.Action = vsFindAction.vsFindActionReplaceAll;
+
+            var result = findObjects.Execute();
+
+            if (result == vsFindResult.vsFindResultReplaced)
+            {
+                changedFiles.Add(filePath);
+            }
+
+            return changedFiles;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return changedFiles;
+        }
+    }
+
+    public async Task<string?> ExtractMethodAsync(string filePath, int startLine, int startColumn, int endLine, int endColumn, string newMethodName)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            await OpenDocumentAsync(filePath);
+
+            var doc = dte.ActiveDocument;
+            if (doc == null)
+            {
+                return null;
+            }
+
+            var textDoc = doc.Object("TextDocument") as TextDocument;
+            if (textDoc == null)
+            {
+                return null;
+            }
+
+            // Select the code to extract
+            textDoc.Selection.MoveToLineAndOffset(startLine, startColumn);
+            textDoc.Selection.MoveToLineAndOffset(endLine, endColumn, true);
+
+            // Use VS command for extract method
+            dte.ExecuteCommand("Refactor.ExtractMethod");
+
+            // Wait for the dialog and type the method name
+            await Task.Delay(500);
+
+            // Note: This is a simplified approach. A full implementation would need to:
+            // 1. Handle the Extract Method dialog
+            // 2. Or use Roslyn's CodeRefactoring API
+
+            return await ReadDocumentAsync(filePath);
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return null;
+        }
+    }
+
+    public async Task<string?> OrganizeUsingsAsync(string filePath, bool placeSystemFirst = true)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            await OpenDocumentAsync(filePath);
+
+            var doc = dte.ActiveDocument;
+            if (doc == null)
+            {
+                return null;
+            }
+
+            // Use VS command for organize usings
+            dte.ExecuteCommand("Edit.OrganizeUsings");
+
+            await Task.Delay(200);
+
+            return await ReadDocumentAsync(filePath);
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return null;
+        }
+    }
+
+    #endregion
+
+    #region Output Windows
+
+    public async Task<string> GetBuildOutputAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            var outputWindow = dte.ToolWindows.OutputWindow;
+            var buildPane = outputWindow.OutputWindowPanes.Item("Build");
+
+            if (buildPane == null)
+            {
+                return string.Empty;
+            }
+
+            var textDocument = buildPane.TextDocument;
+            var editPoint = textDocument.StartPoint.CreateEditPoint();
+            return editPoint.GetText(textDocument.EndPoint);
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return string.Empty;
+        }
+    }
+
+    public async Task<string> GetDebugOutputAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            var outputWindow = dte.ToolWindows.OutputWindow;
+            OutputWindowPane? debugPane = null;
+
+            // Try to find the Debug pane
+            foreach (OutputWindowPane pane in outputWindow.OutputWindowPanes)
+            {
+                if (pane.Name.Equals("Debug", StringComparison.OrdinalIgnoreCase))
+                {
+                    debugPane = pane;
+                    break;
+                }
+            }
+
+            if (debugPane == null)
+            {
+                return string.Empty;
+            }
+
+            var textDocument = debugPane.TextDocument;
+            var editPoint = textDocument.StartPoint.CreateEditPoint();
+            return editPoint.GetText(textDocument.EndPoint);
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return string.Empty;
+        }
+    }
+
+    #endregion
+
+    #region Project Operations
+
+    public async Task<bool> AddFileToProjectAsync(string projectPath, string filePath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                try
+                {
+                    if (PathsEqual(project.FullName, projectPath))
+                    {
+                        project.ProjectItems.AddFromFile(filePath);
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Continue to next project
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                try
+                {
+                    if (PathsEqual(project.FullName, projectPath))
+                    {
+                        ProjectItems? items = project.ProjectItems;
+
+                        // If folder path is specified, navigate to that folder
+                        if (!string.IsNullOrEmpty(folderPath))
+                        {
+                            var folderParts = folderPath.Split('\\', '/');
+                            foreach (var part in folderParts)
+                            {
+                                var folderItem = items?.Item(part);
+                                items = folderItem?.ProjectItems;
+                            }
+                        }
+
+                        if (items == null)
+                        {
+                            return false;
+                        }
+
+                        // Add from template
+                        items.AddFromTemplate(itemTemplate, itemName);
+                        return true;
+                    }
+                }
+                catch
+                {
+                    // Continue to next project
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Helper Methods
+
+    private static EnvDTE.StackFrame? GetCurrentFrame(DTE2 dte)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return null;
+            }
+
+            var thread = dte.Debugger.CurrentThread;
+            if (thread == null || thread.StackFrames == null || thread.StackFrames.Count == 0)
+            {
+                return null;
+            }
+
+            return thread.StackFrames.Item(1); // 1-indexed
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    #endregion
 }

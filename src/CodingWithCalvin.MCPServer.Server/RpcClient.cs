@@ -132,4 +132,76 @@ public class RpcClient : IVisualStudioRpc, IServerRpc, IDisposable
         => Proxy.GoToDefinitionAsync(path, line, column);
     public Task<ReferencesResult> FindReferencesAsync(string path, int line, int column, int maxResults = 100)
         => Proxy.FindReferencesAsync(path, line, column, maxResults);
+
+    // Debugger Control
+    public Task<DebugState> GetDebugStateAsync() => Proxy.GetDebugStateAsync();
+    public Task<bool> StartDebuggingAsync() => Proxy.StartDebuggingAsync();
+    public Task<bool> StopDebuggingAsync() => Proxy.StopDebuggingAsync();
+    public Task<bool> ContinueDebuggingAsync() => Proxy.ContinueDebuggingAsync();
+    public Task<bool> StepIntoAsync() => Proxy.StepIntoAsync();
+    public Task<bool> StepOverAsync() => Proxy.StepOverAsync();
+    public Task<bool> StepOutAsync() => Proxy.StepOutAsync();
+    public Task<bool> RunToCursorAsync(string filePath, int line) => Proxy.RunToCursorAsync(filePath, line);
+
+    // Breakpoints
+    public Task<List<BreakpointInfo>> GetBreakpointsAsync() => Proxy.GetBreakpointsAsync();
+    public Task<BreakpointInfo?> SetBreakpointAsync(SetBreakpointRequest request) => Proxy.SetBreakpointAsync(request);
+    public Task<bool> RemoveBreakpointAsync(string filePath, int line) => Proxy.RemoveBreakpointAsync(filePath, line);
+    public Task<bool> ToggleBreakpointAsync(string filePath, int line) => Proxy.ToggleBreakpointAsync(filePath, line);
+    public Task<bool> SetBreakpointConditionAsync(string filePath, int line, string? condition, int hitCount, string hitCountType)
+        => Proxy.SetBreakpointConditionAsync(filePath, line, condition, hitCount, hitCountType);
+
+    // Variable Inspection
+    public Task<EvaluationResult> EvaluateExpressionAsync(string expression) => Proxy.EvaluateExpressionAsync(expression);
+    public Task<List<VariableInfo>> GetLocalsAsync() => Proxy.GetLocalsAsync();
+    public Task<List<VariableInfo>> GetArgumentsAsync() => Proxy.GetArgumentsAsync();
+    public Task<VariableInfo> InspectVariableAsync(string variableName, int depth = 1)
+        => Proxy.InspectVariableAsync(variableName, depth);
+    public Task<bool> SetVariableValueAsync(string variableName, string value)
+        => Proxy.SetVariableValueAsync(variableName, value);
+
+    // Watch Window
+    public Task<List<WatchItem>> GetWatchExpressionsAsync() => Proxy.GetWatchExpressionsAsync();
+    public Task<bool> AddWatchExpressionAsync(string expression) => Proxy.AddWatchExpressionAsync(expression);
+    public Task<bool> RemoveWatchExpressionAsync(string expression) => Proxy.RemoveWatchExpressionAsync(expression);
+    public Task<bool> ClearWatchExpressionsAsync() => Proxy.ClearWatchExpressionsAsync();
+
+    // Call Stack & Threads
+    public Task<List<StackFrameInfo>> GetCallStackAsync() => Proxy.GetCallStackAsync();
+    public Task<bool> SetActiveStackFrameAsync(int frameIndex) => Proxy.SetActiveStackFrameAsync(frameIndex);
+    public Task<List<ThreadInfo>> GetThreadsAsync() => Proxy.GetThreadsAsync();
+    public Task<bool> SetActiveThreadAsync(int threadId) => Proxy.SetActiveThreadAsync(threadId);
+
+    // Diagnostics
+    public Task<List<DiagnosticInfo>> GetDiagnosticsAsync(string? filePath = null, string? severity = null)
+        => Proxy.GetDiagnosticsAsync(filePath, severity);
+    public Task<List<DiagnosticInfo>> GetErrorListAsync() => Proxy.GetErrorListAsync();
+    public Task<CodeFixResult> ApplyCodeFixAsync(ApplyCodeFixRequest request) => Proxy.ApplyCodeFixAsync(request);
+    public Task<List<CodeFixInfo>> GetCodeFixesAsync(string filePath, int line, int column)
+        => Proxy.GetCodeFixesAsync(filePath, line, column);
+
+    // Testing
+    public Task<List<TestInfo>> DiscoverTestsAsync(string? projectName = null) => Proxy.DiscoverTestsAsync(projectName);
+    public Task<TestRunSummary> RunAllTestsAsync(string? projectName = null) => Proxy.RunAllTestsAsync(projectName);
+    public Task<TestRunSummary> RunTestsAsync(RunTestsRequest request) => Proxy.RunTestsAsync(request);
+    public Task<TestRunSummary> GetTestResultsAsync() => Proxy.GetTestResultsAsync();
+    public Task<bool> DebugTestAsync(string testName) => Proxy.DebugTestAsync(testName);
+
+    // Refactoring
+    public Task<List<string>> RenameSymbolAsync(string filePath, int line, int column, string newName)
+        => Proxy.RenameSymbolAsync(filePath, line, column, newName);
+    public Task<string?> ExtractMethodAsync(string filePath, int startLine, int startColumn, int endLine, int endColumn, string newMethodName)
+        => Proxy.ExtractMethodAsync(filePath, startLine, startColumn, endLine, endColumn, newMethodName);
+    public Task<string?> OrganizeUsingsAsync(string filePath, bool placeSystemFirst = true)
+        => Proxy.OrganizeUsingsAsync(filePath, placeSystemFirst);
+
+    // Output Windows
+    public Task<string> GetBuildOutputAsync() => Proxy.GetBuildOutputAsync();
+    public Task<string> GetDebugOutputAsync() => Proxy.GetDebugOutputAsync();
+
+    // Project Operations
+    public Task<bool> AddFileToProjectAsync(string projectPath, string filePath)
+        => Proxy.AddFileToProjectAsync(projectPath, filePath);
+    public Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null)
+        => Proxy.CreateProjectItemAsync(projectPath, itemTemplate, itemName, folderPath);
 }
