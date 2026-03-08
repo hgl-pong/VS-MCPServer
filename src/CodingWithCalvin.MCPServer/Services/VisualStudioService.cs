@@ -12,6 +12,9 @@ using EnvDTE80;
 using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
+using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.TextManager.Interop;
 using ActivityStatusCode = System.Diagnostics.ActivityStatusCode;
 using VsWorkspace = Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace;
 // Resolve type conflicts between Roslyn, EnvDTE and Shared.Models
@@ -70,6 +73,69 @@ public class VisualStudioService : IVisualStudioService
     private static bool PathsEqual(string path1, string path2)
     {
         return NormalizePath(path1).Equals(NormalizePath(path2), StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Gets the IVsTextBuffer for a document, which works for all file types including C++.
+    /// </summary>
+    private IVsTextBuffer? GetTextBufferForDocument(string filePath)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        
+        var rdt = _serviceProvider.GetService(typeof(SVsRunningDocumentTable)) as IVsRunningDocumentTable;
+        if (rdt == null) return null;
+
+        if (rdt.FindAndLockDocument((uint)_VSRDTFLAGS.RDT_ReadLock, filePath, out _, out _, out IntPtr docData, out _) == 0)
+        {
+            try
+            {
+                if (docData != IntPtr.Zero)
+                {
+                    // Try to get IVsTextBuffer from the document data
+                    var textBuffer = System.Runtime.InteropServices.Marshal.GetObjectForIUnknown(docData) as IVsTextBuffer;
+                    return textBuffer;
+                }
+            }
+            finally
+            {
+                if (docData != IntPtr.Zero)
+                {
+                    System.Runtime.InteropServices.Marshal.Release(docData);
+                }
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Gets the text content from an IVsTextBuffer.
+    /// </summary>
+    private static string GetTextFromBuffer(IVsTextBuffer textBuffer)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        
+        if (textBuffer is IVsTextLines textLines)
+        {
+            textLines.GetLastLineIndex(out int lastLine, out int lastIndex);
+            textLines.GetLineText(0, 0, lastLine, lastIndex, out string text);
+            return text ?? string.Empty;
+        }
+        return string.Empty;
+    }
+
+    /// <summary>
+    /// Gets the IVsTextView for the active document.
+    /// </summary>
+    private IVsTextView? GetActiveTextView()
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        
+        var textManager = _serviceProvider.GetService(typeof(SVsTextManager)) as IVsTextManager;
+        if (textManager == null) return null;
+
+        textManager.GetActiveView(1, null, out IVsTextView? textView);
+        return textView;
     }
 
     public async Task<SolutionInfo?> GetSolutionInfoAsync()
@@ -289,6 +355,17 @@ public class VisualStudioService : IVisualStudioService
                         editPoint.Insert(content);
                         return true;
                     }
+                    
+                    // Fallback for C++ and other non-EnvDTETextDocument files
+                    // Save current state, close, write to disk, and reopen
+                    var wasSaved = doc.Saved;
+                    doc.Close(vsSaveChanges.vsSaveChangesNo);
+                    
+                    await Task.Run(() => File.WriteAllText(path, content));
+                    
+                    // Reopen the document
+                    dte.ItemOperations.OpenFile(path, EnvDTE.Constants.vsViewKindTextView);
+                    return true;
                 }
             }
             catch (Exception ex)
@@ -370,13 +447,35 @@ public class VisualStudioService : IVisualStudioService
         }
 
         var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-        if (textDoc == null)
+        if (textDoc != null)
         {
-            return false;
+            textDoc.Selection.Insert(text);
+            return true;
         }
 
-        textDoc.Selection.Insert(text);
-        return true;
+        // Fallback for C++ and other file types using IVsTextView
+        var textView = GetActiveTextView();
+        if (textView != null)
+        {
+            textView.GetCaretPos(out int line, out int column);
+            textView.GetBuffer(out IVsTextLines? textLines);
+            if (textLines != null)
+            {
+                // Use ReplaceLines to insert text at cursor position
+                var textPtr = System.Runtime.InteropServices.Marshal.StringToCoTaskMemUni(text);
+                try
+                {
+                    textLines.ReplaceLines(line, column, line, column, textPtr, text.Length, null);
+                    return true;
+                }
+                finally
+                {
+                    System.Runtime.InteropServices.Marshal.FreeCoTaskMem(textPtr);
+                }
+            }
+        }
+
+        return false;
     }
 
     public async Task<bool> ReplaceTextAsync(string oldText, string newText)
@@ -391,20 +490,42 @@ public class VisualStudioService : IVisualStudioService
         }
 
         var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-        if (textDoc == null)
+        if (textDoc != null)
         {
+            var editPoint = textDoc.StartPoint.CreateEditPoint();
+            var content = editPoint.GetText(textDoc.EndPoint);
+            var newContent = content.Replace(oldText, newText);
+
+            if (content != newContent)
+            {
+                editPoint.Delete(textDoc.EndPoint);
+                editPoint.Insert(newContent);
+                return true;
+            }
             return false;
         }
 
-        var editPoint = textDoc.StartPoint.CreateEditPoint();
-        var content = editPoint.GetText(textDoc.EndPoint);
-        var newContent = content.Replace(oldText, newText);
-
-        if (content != newContent)
+        // Fallback for C++ and other file types using IVsTextBuffer
+        var textBuffer = GetTextBufferForDocument(doc.FullName);
+        if (textBuffer is IVsTextLines textLines)
         {
-            editPoint.Delete(textDoc.EndPoint);
-            editPoint.Insert(newContent);
-            return true;
+            var content = GetTextFromBuffer(textBuffer);
+            var newContent = content.Replace(oldText, newText);
+            
+            if (content != newContent)
+            {
+                textLines.GetLastLineIndex(out int lastLine, out int lastIndex);
+                var newContentPtr = System.Runtime.InteropServices.Marshal.StringToCoTaskMemUni(newContent);
+                try
+                {
+                    textLines.ReplaceLines(0, 0, lastLine, lastIndex, newContentPtr, newContent.Length, null);
+                    return true;
+                }
+                finally
+                {
+                    System.Runtime.InteropServices.Marshal.FreeCoTaskMem(newContentPtr);
+                }
+            }
         }
 
         return false;
@@ -422,13 +543,23 @@ public class VisualStudioService : IVisualStudioService
         }
 
         var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-        if (textDoc == null)
+        if (textDoc != null)
         {
-            return false;
+            textDoc.Selection.GotoLine(line);
+            return true;
         }
 
-        textDoc.Selection.GotoLine(line);
-        return true;
+        // Fallback for C++ and other file types using IVsTextView
+        var textView = GetActiveTextView();
+        if (textView != null)
+        {
+            // Set caret to the beginning of the specified line (0-indexed in IVsTextView)
+            textView.SetCaretPos(line - 1, 0);
+            textView.CenterLines(line - 1, 1);
+            return true;
+        }
+
+        return false;
     }
 
     public async Task<List<FindResult>> FindAsync(string searchText, bool matchCase = false, bool wholeWord = false)
@@ -443,28 +574,52 @@ public class VisualStudioService : IVisualStudioService
             return results;
         }
 
+        string content;
+        
         var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-        if (textDoc == null)
+        if (textDoc != null)
         {
-            return results;
+            var editPoint = textDoc.StartPoint.CreateEditPoint();
+            content = editPoint.GetText(textDoc.EndPoint);
+        }
+        else
+        {
+            // Fallback for C++ and other file types using IVsTextBuffer
+            var textBuffer = GetTextBufferForDocument(doc.FullName);
+            if (textBuffer == null)
+            {
+                return results;
+            }
+            content = GetTextFromBuffer(textBuffer);
         }
 
-        var editPoint = textDoc.StartPoint.CreateEditPoint();
-        var content = editPoint.GetText(textDoc.EndPoint);
         var comparison = matchCase ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
         var lines = content.Split('\n');
         for (int i = 0; i < lines.Length; i++)
         {
-            var line = lines[i];
+            var lineText = lines[i];
             var index = 0;
-            while ((index = line.IndexOf(searchText, index, comparison)) >= 0)
+            while ((index = lineText.IndexOf(searchText, index, comparison)) >= 0)
             {
+                // For wholeWord, check word boundaries
+                if (wholeWord)
+                {
+                    bool isWordCharBefore = index > 0 && (char.IsLetterOrDigit(lineText[index - 1]) || lineText[index - 1] == '_');
+                    bool isWordCharAfter = index + searchText.Length < lineText.Length && 
+                                          (char.IsLetterOrDigit(lineText[index + searchText.Length]) || lineText[index + searchText.Length] == '_');
+                    if (isWordCharBefore || isWordCharAfter)
+                    {
+                        index += searchText.Length;
+                        continue;
+                    }
+                }
+                
                 results.Add(new FindResult
                 {
                     Line = i + 1,
                     Column = index + 1,
-                    Text = line.Trim(),
+                    Text = lineText.Trim(),
                     DocumentPath = doc.FullName
                 });
                 index += searchText.Length;
@@ -504,8 +659,32 @@ public class VisualStudioService : IVisualStudioService
         try
         {
             var config = dte.Solution.SolutionBuild.ActiveConfiguration.Name;
-            var normalizedPath = NormalizePath(projectName);
-            dte.Solution.SolutionBuild.BuildProject(config, normalizedPath, true);
+            
+            // BuildProject requires the project's UniqueName (relative path in solution),
+            // not the full file system path. Try to find the correct UniqueName.
+            string uniqueName = projectName;
+            
+            // If it looks like a full path, try to find the project's UniqueName
+            if (Path.IsPathRooted(projectName))
+            {
+                foreach (EnvDTE.Project proj in dte.Solution.Projects)
+                {
+                    try
+                    {
+                        if (PathsEqual(proj.FullName, projectName))
+                        {
+                            uniqueName = proj.UniqueName;
+                            break;
+                        }
+                    }
+                    catch
+                    {
+                        // Some project types throw on FullName access
+                    }
+                }
+            }
+            
+            dte.Solution.SolutionBuild.BuildProject(config, uniqueName, true);
             return true;
         }
         catch (Exception ex)
@@ -1011,15 +1190,31 @@ public class VisualStudioService : IVisualStudioService
             }
 
             var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-            if (textDoc == null)
+            string? originalPath;
+            int originalLine;
+
+            if (textDoc != null)
             {
-                return result;
+                textDoc.Selection.MoveToLineAndOffset(line, column);
+                originalPath = doc.FullName;
+                originalLine = textDoc.Selection.ActivePoint.Line;
             }
-
-            textDoc.Selection.MoveToLineAndOffset(line, column);
-
-            var originalPath = doc.FullName;
-            var originalLine = textDoc.Selection.ActivePoint.Line;
+            else
+            {
+                // Fallback for C++ and other file types using IVsTextView
+                var textView = GetActiveTextView();
+                if (textView == null)
+                {
+                    return result;
+                }
+                
+                // Set cursor position (0-indexed in IVsTextView)
+                textView.SetCaretPos(line - 1, column - 1);
+                textView.CenterLines(line - 1, 1);
+                
+                originalPath = doc.FullName;
+                originalLine = line;
+            }
 
             dte.ExecuteCommand("Edit.GoToDefinition");
 
@@ -1028,32 +1223,49 @@ public class VisualStudioService : IVisualStudioService
             var newDoc = dte.ActiveDocument;
             if (newDoc != null)
             {
+                var newPath = newDoc.FullName;
+                int newLine, newColumn;
+
                 var newTextDoc = newDoc.Object("EnvDTETextDocument") as EnvDTETextDocument;
                 if (newTextDoc != null)
                 {
-                    var newPath = newDoc.FullName;
-                    var newLine = newTextDoc.Selection.ActivePoint.Line;
-                    var newColumn = newTextDoc.Selection.ActivePoint.LineCharOffset;
-
-                    if (!PathsEqual(newPath, originalPath) || newLine != originalLine)
+                    newLine = newTextDoc.Selection.ActivePoint.Line;
+                    newColumn = newTextDoc.Selection.ActivePoint.LineCharOffset;
+                }
+                else
+                {
+                    // Fallback for C++ files
+                    var newTextView = GetActiveTextView();
+                    if (newTextView == null)
                     {
-                        result.Found = true;
-                        result.SymbolName = GetWordAtPosition(textDoc, line, column);
-
-                        var editPoint = newTextDoc.StartPoint.CreateEditPoint();
-                        editPoint.MoveToLineAndOffset(newLine, 1);
-                        var lineText = editPoint.GetLines(newLine, newLine + 1).Trim();
-
-                        result.Definitions.Add(new LocationInfo
-                        {
-                            FilePath = newPath,
-                            Line = newLine,
-                            Column = newColumn,
-                            EndLine = newLine,
-                            EndColumn = newColumn,
-                            Preview = lineText
-                        });
+                        return result;
                     }
+                    newTextView.GetCaretPos(out newLine, out newColumn);
+                    newLine++; // Convert to 1-indexed
+                    newColumn++;
+                }
+
+                if (!PathsEqual(newPath, originalPath) || newLine != originalLine)
+                {
+                    result.Found = true;
+                    
+                    // Get symbol name from the original position
+                    var textBuffer = GetTextBufferForDocument(path);
+                    if (textBuffer is IVsTextLines textLines)
+                    {
+                        textLines.GetLineText(line - 1, column - 1, line - 1, Math.Min(column + 50, GetLineLength(textLines, line - 1)), out string? lineText);
+                        result.SymbolName = ExtractWord(lineText ?? string.Empty);
+                    }
+
+                    result.Definitions.Add(new LocationInfo
+                    {
+                        FilePath = newPath,
+                        Line = newLine,
+                        Column = newColumn,
+                        EndLine = newLine,
+                        EndColumn = newColumn,
+                        Preview = GetLinePreview(newPath, newLine)
+                    });
                 }
             }
         }
@@ -1063,6 +1275,37 @@ public class VisualStudioService : IVisualStudioService
         }
 
         return result;
+    }
+
+    private static int GetLineLength(IVsTextLines textLines, int line)
+    {
+        ThreadHelper.ThrowIfNotOnUIThread();
+        textLines.GetLengthOfLine(line, out int length);
+        return length;
+    }
+
+    private static string ExtractWord(string text)
+    {
+        var match = System.Text.RegularExpressions.Regex.Match(text, @"[\w_]+");
+        return match.Success ? match.Value : string.Empty;
+    }
+
+    private string GetLinePreview(string filePath, int line)
+    {
+        try
+        {
+            var textBuffer = GetTextBufferForDocument(filePath);
+            if (textBuffer is IVsTextLines textLines)
+            {
+                textLines.GetLineText(line - 1, 0, line - 1, GetLineLength(textLines, line - 1), out string? lineText);
+                return (lineText ?? string.Empty).Trim();
+            }
+        }
+        catch
+        {
+            // Ignore errors getting line preview
+        }
+        return string.Empty;
     }
 
     private static string GetWordAtPosition(EnvDTETextDocument textDoc, int line, int column)
@@ -1107,14 +1350,36 @@ public class VisualStudioService : IVisualStudioService
                 return result;
             }
 
-            var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-            if (textDoc == null)
-            {
-                return result;
-            }
+            string symbolName;
 
-            textDoc.Selection.MoveToLineAndOffset(line, column);
-            var symbolName = GetWordAtPosition(textDoc, line, column);
+            var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
+            if (textDoc != null)
+            {
+                textDoc.Selection.MoveToLineAndOffset(line, column);
+                symbolName = GetWordAtPosition(textDoc, line, column);
+            }
+            else
+            {
+                // Fallback for C++ and other file types using IVsTextView
+                var textView = GetActiveTextView();
+                if (textView == null)
+                {
+                    return result;
+                }
+                
+                // Set cursor position (0-indexed in IVsTextView)
+                textView.SetCaretPos(line - 1, column - 1);
+                
+                // Get word at cursor position
+                textView.GetBuffer(out IVsTextLines? textLines);
+                if (textLines == null)
+                {
+                    return result;
+                }
+                
+                textLines.GetLineText(line - 1, 0, line - 1, GetLineLength(textLines, line - 1), out string? lineText);
+                symbolName = ExtractWordFromPosition(lineText ?? string.Empty, column - 1);
+            }
 
             if (string.IsNullOrWhiteSpace(symbolName))
             {
@@ -1135,6 +1400,24 @@ public class VisualStudioService : IVisualStudioService
         }
 
         return result;
+    }
+
+    private static string ExtractWordFromPosition(string lineText, int column)
+    {
+        if (string.IsNullOrEmpty(lineText) || column < 0 || column >= lineText.Length)
+            return string.Empty;
+            
+        // Find word boundaries
+        int start = column;
+        int end = column;
+        
+        while (start > 0 && (char.IsLetterOrDigit(lineText[start - 1]) || lineText[start - 1] == '_'))
+            start--;
+            
+        while (end < lineText.Length && (char.IsLetterOrDigit(lineText[end]) || lineText[end] == '_'))
+            end++;
+            
+        return lineText.Substring(start, end - start);
     }
 
     private async Task<List<LocationInfo>> FindInSolutionAsync(DTE2 dte, string searchText, int maxResults)
@@ -1431,7 +1714,8 @@ public class VisualStudioService : IVisualStudioService
             }
 
             // Set a temporary breakpoint at the cursor position
-            var bp = dte.Debugger.Breakpoints.Add(File: filePath, Line: line);
+            // Correct parameter order: (Function, File, Line, Column, ...)
+            var bp = dte.Debugger.Breakpoints.Add("", filePath, line, 1);
             
             // Continue execution
             dte.Debugger.Go(false);
@@ -1491,11 +1775,13 @@ public class VisualStudioService : IVisualStudioService
         try
         {
             // Breakpoints.Add returns a Breakpoints collection, get the first one
-            // Note: EnvDTE Breakpoints.Add signature: (string File, string Line, int Column, [optional params])
+            // Note: EnvDTE Breakpoints.Add signature: (string Function, string File, int Line, int Column, ...)
+            // For file/line breakpoints, Function should be empty string
             var breakpoints = dte.Debugger.Breakpoints.Add(
-                request.FilePath,
-                request.Line.ToString(),
-                request.Column
+                "",                     // Function (empty for file/line breakpoints)
+                request.FilePath,       // File path
+                request.Line,           // Line number (int)
+                request.Column          // Column number
             );
 
             if (breakpoints == null || breakpoints.Count == 0)
@@ -1594,7 +1880,8 @@ public class VisualStudioService : IVisualStudioService
             // Create new breakpoint with condition/hitcount if specified
             // Note: EnvDTE's Breakpoints.Add doesn't support condition/hitcount in all versions
             // This is a limitation - conditions must be set manually in VS UI
-            var breakpoints = dte.Debugger.Breakpoints.Add(filePath, line.ToString(), 1);
+            // Correct parameter order: (Function, File, Line, Column, ...)
+            var breakpoints = dte.Debugger.Breakpoints.Add("", filePath, line, 1);
             return breakpoints != null && breakpoints.Count > 0;
         }
         catch (Exception ex)
@@ -2501,16 +2788,37 @@ public class VisualStudioService : IVisualStudioService
                 return changedFiles;
             }
 
+            string symbolName;
+            
             var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-            if (textDoc == null)
+            if (textDoc != null)
             {
-                return changedFiles;
+                textDoc.Selection.MoveToLineAndOffset(line, column);
+                symbolName = GetWordAtPosition(textDoc, line, column);
+            }
+            else
+            {
+                // Fallback for C++ and other file types using IVsTextView
+                var textView = GetActiveTextView();
+                if (textView == null)
+                {
+                    return changedFiles;
+                }
+                
+                // Set cursor position (0-indexed in IVsTextView)
+                textView.SetCaretPos(line - 1, column - 1);
+                
+                // Get word at cursor position
+                textView.GetBuffer(out IVsTextLines? textLines);
+                if (textLines == null)
+                {
+                    return changedFiles;
+                }
+                
+                textLines.GetLineText(line - 1, 0, line - 1, GetLineLength(textLines, line - 1), out string? lineText);
+                symbolName = ExtractWordFromPosition(lineText ?? string.Empty, column - 1);
             }
 
-            textDoc.Selection.MoveToLineAndOffset(line, column);
-
-            // Get the symbol name at cursor
-            var symbolName = GetWordAtPosition(textDoc, line, column);
             if (string.IsNullOrEmpty(symbolName))
             {
                 return changedFiles;
@@ -2557,14 +2865,24 @@ public class VisualStudioService : IVisualStudioService
             }
 
             var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
-            if (textDoc == null)
+            if (textDoc != null)
             {
-                return null;
+                // Select the code to extract
+                textDoc.Selection.MoveToLineAndOffset(startLine, startColumn);
+                textDoc.Selection.MoveToLineAndOffset(endLine, endColumn, true);
             }
-
-            // Select the code to extract
-            textDoc.Selection.MoveToLineAndOffset(startLine, startColumn);
-            textDoc.Selection.MoveToLineAndOffset(endLine, endColumn, true);
+            else
+            {
+                // Fallback for C++ and other file types using IVsTextView
+                var textView = GetActiveTextView();
+                if (textView == null)
+                {
+                    return null;
+                }
+                
+                // Set selection (0-indexed in IVsTextView)
+                textView.SetSelection(startLine - 1, startColumn - 1, endLine - 1, endColumn - 1);
+            }
 
             // Use VS command for extract method
             dte.ExecuteCommand("Refactor.ExtractMethod");
@@ -2585,6 +2903,10 @@ public class VisualStudioService : IVisualStudioService
         }
     }
 
+    /// <summary>
+    /// Organizes using statements in a C# document.
+    /// Note: This command only works for C# files. C++ files use #include directives.
+    /// </summary>
     public async Task<string?> OrganizeUsingsAsync(string filePath, bool placeSystemFirst = true)
     {
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
