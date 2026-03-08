@@ -3045,42 +3045,183 @@ public class VisualStudioService : IVisualStudioService
 
         try
         {
-            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            // Find the project
+            EnvDTE.Project? targetProject = null;
+            foreach (EnvDTE.Project proj in dte.Solution.Projects)
             {
                 try
                 {
-                    if (PathsEqual(project.FullName, projectPath))
+                    if (PathsEqual(proj.FullName, projectPath))
                     {
-                        ProjectItems? items = project.ProjectItems;
-
-                        // If folder path is specified, navigate to that folder
-                        if (!string.IsNullOrEmpty(folderPath))
-                        {
-                            var folderParts = folderPath.Split('\\', '/');
-                            foreach (var part in folderParts)
-                            {
-                                var folderItem = items?.Item(part);
-                                items = folderItem?.ProjectItems;
-                            }
-                        }
-
-                        if (items == null)
-                        {
-                            return false;
-                        }
-
-                        // Add from template
-                        items.AddFromTemplate(itemTemplate, itemName);
-                        return true;
+                        targetProject = proj;
+                        break;
                     }
                 }
                 catch
                 {
-                    // Continue to next project
+                    // Skip projects that throw on FullName access
                 }
             }
 
-            return false;
+            if (targetProject == null)
+            {
+                return false;
+            }
+
+            ProjectItems? targetItems = targetProject.ProjectItems;
+
+            // If folder path is specified, navigate to or create that folder
+            if (!string.IsNullOrEmpty(folderPath))
+            {
+                var folderParts = folderPath.Split(new[] { '\\', '/' }, StringSplitOptions.RemoveEmptyEntries);
+                foreach (var part in folderParts)
+                {
+                    try
+                    {
+                        // Try to find existing folder
+                        ProjectItem? folderItem = null;
+                        foreach (ProjectItem item in targetItems)
+                        {
+                            try
+                            {
+                                if (item.Kind == EnvDTE.Constants.vsProjectItemKindPhysicalFolder &&
+                                    item.Name.Equals(part, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    folderItem = item;
+                                    break;
+                                }
+                            }
+                            catch
+                            {
+                                // Skip
+                            }
+                        }
+
+                        if (folderItem == null)
+                        {
+                            // Create the folder
+                            folderItem = targetItems.AddFolder(part);
+                        }
+
+                        targetItems = folderItem.ProjectItems;
+                    }
+                    catch
+                    {
+                        // Continue with current items if folder creation fails
+                    }
+                }
+            }
+
+            if (targetItems == null)
+            {
+                targetItems = targetProject.ProjectItems;
+            }
+
+            // Determine the project language and template
+            string language = "CSharp"; // Default
+            string templateName = itemTemplate;
+            
+            // Map common template names to VS template names
+            var templateMapping = new Dictionary<string, (string Template, string Language)>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "class", ("Class", "CSharp") },
+                { "interface", ("Interface", "CSharp") },
+                { "struct", ("Struct", "CSharp") },
+                { "enum", ("Enum", "CSharp") },
+                { "delegate", ("Delegate", "CSharp") },
+                { "abstract class", ("AbstractClass", "CSharp") },
+                { "partial class", ("PartialClass", "CSharp") },
+                { "windows form", ("WinForms", "CSharp") },
+                { "user control", ("UserControl", "CSharp") },
+                { "web form", ("WebForm", "CSharp") },
+                { "xml file", ("XMLFile", "CSharp") },
+                { "text file", ("TextFile", "CSharp") },
+                { "resource file", ("Resource", "CSharp") },
+                { "app config", ("AppConfig", "CSharp") },
+                // C++ templates
+                { "c++ class", ("CPPClass", "C++") },
+                { "cpp class", ("CPPClass", "C++") },
+                { "cpp file", ("CPP", "C++") },
+                { "header file", ("Header", "C++") },
+                { "source file", ("CPP", "C++") },
+            };
+
+            // Check if itemTemplate matches a known template
+            if (templateMapping.TryGetValue(itemTemplate.ToLowerInvariant(), out var mapped))
+            {
+                templateName = mapped.Template;
+                language = mapped.Language;
+            }
+
+            // Try to add from template (using the raw template name - VS will try to find it)
+            try
+            {
+                // Try with the mapped template name
+                targetItems.AddFromTemplate(templateName, itemName);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                VsixTelemetry.TrackException(ex);
+                // Try fallback
+            }
+
+            // Fallback: create file on disk and add to project
+            try
+            {
+                // Determine file extension based on language
+                string extension = ".txt";
+                if (language == "CSharp")
+                {
+                    extension = ".cs";
+                }
+                else if (language == "C++")
+                {
+                    extension = ".cpp";
+                }
+
+                // Check if itemName has extension
+                string fileName = itemName;
+                if (!fileName.Contains('.'))
+                {
+                    fileName += extension;
+                }
+
+                // Get project directory
+                string? projectDir = Path.GetDirectoryName(targetProject.FullName);
+                if (string.IsNullOrEmpty(projectDir))
+                {
+                    return false;
+                }
+
+                string filePath = Path.Combine(projectDir, fileName);
+
+                // Create the file if it doesn't exist
+                if (!File.Exists(filePath))
+                {
+                    // Create with basic template content
+                    string content = "";
+                    if (fileName.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                    {
+                        content = "namespace " + Path.GetFileNameWithoutExtension(fileName) + "\n{\n    \n}\n";
+                    }
+                    else if (fileName.EndsWith(".cpp", StringComparison.OrdinalIgnoreCase) || 
+                             fileName.EndsWith(".h", StringComparison.OrdinalIgnoreCase))
+                    {
+                        content = "// " + fileName + "\n\n";
+                    }
+                    
+                    File.WriteAllText(filePath, content);
+                }
+
+                // Add to project
+                targetItems.AddFromFile(filePath);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
         }
         catch (Exception ex)
         {

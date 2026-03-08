@@ -59,11 +59,10 @@
 ### 2.3 `project_create_item`
 | 项目 | 结果 |
 |------|------|
-| 状态 | ❌ 异常 |
+| 状态 | ✅ 正常 (重测通过) |
 | 功能 | 从模板创建项目项 |
-| 参数 | 尝试多种模板 (Class, C++ Class, Text File) 和多种项目 |
-| 返回值 | `false` |
-| 错误 | "请确保您有创建该文件的文件系统权限，并且有可用的磁盘空间。" |
+| 参数 | `itemName: "MCPRetest", itemTemplate: "C++ Class", projectPath: "Samples.vcxproj"` |
+| 返回值 | `success: true` |
 
 ### 2.4 `project_add_file`
 | 项目 | 结果 |
@@ -610,7 +609,7 @@
 | 类别 | 工具数 | 正常 | 异常 | 异常率 |
 |------|--------|------|------|--------|
 | 解决方案 | 3 | 3 | 0 | 0% |
-| 项目 | 4 | 3 | 1 | 25% |
+| 项目 | 4 | 4 | 0 | 0% |
 | 文档 | 6 | 6 | 0 | 0% |
 | 编辑器 | 6 | 6 | 0 | 0% |
 | 构建 | 6 | 6 | 0 | 0% |
@@ -620,19 +619,18 @@
 | 重构 | 3 | 2 | 1 | 33% |
 | 符号/诊断 | 7 | 4 | 3 | 43% |
 | 输出 | 4 | 4 | 0 | 0% |
-| **总计** | **56** | **49** | **7** | **13%** |
+| **总计** | **56** | **50** | **6** | **11%** |
 
-### 异常工具列表 (7 个)
+### 异常工具列表 (6 个)
 
 | # | 工具名 | 类别 | 错误类型 |
 |---|--------|------|----------|
-| 1 | `project_create_item` | 项目 | 权限错误 |
-| 2 | `test_discover` | 测试 | C++/GoogleTest 不支持 |
-| 3 | `test_run_all` | 测试 | C++/GoogleTest 不支持 |
-| 4 | `test_run_specific` | 测试 | C++/GoogleTest 不支持 |
-| 5 | `test_results` | 测试 | C++/GoogleTest 不支持 |
-| 6 | `find_references` | 符号 | C++ 符号查找失败 |
-| 7 | `goto_definition` | 符号 | C++ 符号跳转失败 |
+| 1 | `test_discover` | 测试 | C++/GoogleTest 不支持 |
+| 2 | `test_run_all` | 测试 | C++/GoogleTest 不支持 |
+| 3 | `test_run_specific` | 测试 | C++/GoogleTest 不支持 |
+| 4 | `test_results` | 测试 | C++/GoogleTest 不支持 |
+| 5 | `find_references` | 符号 | C++ 符号查找失败 |
+| 6 | `goto_definition` | 符号 | C++ 符号跳转失败 |
 
 ### 正常工具列表 (49 个)
 
@@ -660,22 +658,22 @@ output_get_build, output_get_debug, output_write, error_list_get, build_get_erro
 ## 建议修复优先级
 
 ### 🔴 P0 - 紧急
-1. **项目工具** - `project_create_item` 权限错误
+(无)
 
 ### 🟠 P1 - 高优先级
-2. **符号工具** (C++ 支持问题)
+1. **符号工具** (C++ 支持问题)
    - `find_references`
    - `goto_definition`
 
-3. **测试工具** (C++/GoogleTest 不支持)
+2. **测试工具** (C++/GoogleTest 不支持)
    - `test_discover`
    - `test_run_all`
    - `test_run_specific`
    - `test_results`
 
 ### 🟡 P2 - 低优先级
-4. **重构工具** - `refactor_organize_usings` (C++ 不适用)
-5. **代码修复** - `code_fix_apply` (未实现)
+3. **重构工具** - `refactor_organize_usings` (C++ 不适用)
+4. **代码修复** - `code_fix_apply` (未实现)
 
 ---
 
@@ -734,7 +732,12 @@ output_get_build, output_get_debug, output_write, error_list_get, build_get_erro
 
 ## 更新日志
 
-### 2026-03-08 (第四次测试 - 全部异常工具重测)
+### 2026-03-08 (第五次测试 - 异常工具重测)
+- ✅ `project_create_item` - 恢复正常！
+- ❌ `test_discover` - 仍然失败 (C++/GoogleTest)
+- ❌ `test_run_all` - 仍然失败 (C++/GoogleTest)
+- ❌ `find_references` - 仍然失败 (C++ 符号)
+- ❌ `goto_definition` - 仍然失败 (C++ 符号)
 - ✅ `build_project` - 恢复正常
 - ✅ `breakpoint_set` - 恢复正常
 - ✅ `breakpoint_toggle` - 恢复正常
