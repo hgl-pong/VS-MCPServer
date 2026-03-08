@@ -28,10 +28,18 @@ public class BuildTools
     [McpServerTool(Name = "build_project", Destructive = false)]
     [Description("Build a specific project. The build runs asynchronously; use build_status to check progress. IMPORTANT: Requires the full path to the .csproj file, not just the project name. Use project_list first to get the correct path.")]
     public async Task<string> BuildProjectAsync(
-        [Description("The full absolute path to the project file (.csproj). Get this from project_list. Supports forward slashes (/) or backslashes (\\).")] string projectName)
+        [Description("The full absolute path to the project file (.csproj). Get this from project_list. Supports forward slashes (/) or backslash (\\).")] string projectName)
     {
         var success = await _rpcClient.BuildProjectAsync(projectName);
         return success ? $"Build started for project: {projectName}" : $"Failed to build project: {projectName}";
+    }
+
+    [McpServerTool(Name = "rebuild_solution", Destructive = false)]
+    [Description("Rebuild the entire solution (clean and build). The rebuild runs asynchronously; use build_status to check progress.")]
+    public async Task<string> RebuildSolutionAsync()
+    {
+        var success = await _rpcClient.RebuildSolutionAsync();
+        return success ? "Rebuild started" : "Failed to start rebuild (is a solution open?)";
     }
 
     [McpServerTool(Name = "clean_solution", Destructive = true, Idempotent = true)]
@@ -56,5 +64,13 @@ public class BuildTools
     {
         var status = await _rpcClient.GetBuildStatusAsync();
         return JsonSerializer.Serialize(status, _jsonOptions);
+    }
+
+    [McpServerTool(Name = "build_get_errors", ReadOnly = true)]
+    [Description("Get all build errors from the Error List. Returns a list of errors with project name, file path, line, column, message, and severity.")]
+    public async Task<string> GetBuildErrorsAsync()
+    {
+        var errors = await _rpcClient.GetBuildErrorsAsync();
+        return JsonSerializer.Serialize(errors, _jsonOptions);
     }
 }

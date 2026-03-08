@@ -198,10 +198,57 @@ public class RpcClient : IVisualStudioRpc, IServerRpc, IDisposable
     // Output Windows
     public Task<string> GetBuildOutputAsync() => Proxy.GetBuildOutputAsync();
     public Task<string> GetDebugOutputAsync() => Proxy.GetDebugOutputAsync();
+    public Task<bool> WriteToOutputWindowAsync(string paneName, string message)
+        => Proxy.WriteToOutputWindowAsync(paneName, message);
 
     // Project Operations
     public Task<bool> AddFileToProjectAsync(string projectPath, string filePath)
         => Proxy.AddFileToProjectAsync(projectPath, filePath);
     public Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null)
         => Proxy.CreateProjectItemAsync(projectPath, itemTemplate, itemName, folderPath);
+    public Task<bool> RemoveFileFromProjectAsync(string projectPath, string filePath)
+        => Proxy.RemoveFileFromProjectAsync(projectPath, filePath);
+    public Task<bool> AddProjectReferenceAsync(string projectPath, string referenceProjectPath)
+        => Proxy.AddProjectReferenceAsync(projectPath, referenceProjectPath);
+    public Task<bool> RemoveProjectReferenceAsync(string projectPath, string referenceProjectPath)
+        => Proxy.RemoveProjectReferenceAsync(projectPath, referenceProjectPath);
+    public Task<bool> AddProjectToSolutionAsync(string projectPath)
+        => Proxy.AddProjectToSolutionAsync(projectPath);
+    public Task<bool> RemoveProjectFromSolutionAsync(string projectPath)
+        => Proxy.RemoveProjectFromSolutionAsync(projectPath);
+
+    // General
+    public Task<CommandResult> ExecuteCommandAsync(string commandName, string? args = null)
+        => Proxy.ExecuteCommandAsync(commandName, args);
+    public Task<IdeStatus> GetIdeStatusAsync() => Proxy.GetIdeStatusAsync();
+
+    // NuGet
+    public Task<List<ProjectPackage>> GetProjectPackagesAsync(string projectPath)
+        => Proxy.GetProjectPackagesAsync(projectPath);
+    public Task<NuGetSearchResult> SearchNuGetPackagesAsync(string searchTerm, int skip = 0, int take = 20)
+        => Proxy.SearchNuGetPackagesAsync(searchTerm, skip, take);
+    public Task<bool> InstallNuGetPackageAsync(string projectPath, string packageId, string? version = null)
+        => Proxy.InstallNuGetPackageAsync(projectPath, packageId, version);
+    public Task<bool> UpdateNuGetPackageAsync(string projectPath, string packageId, string? version = null)
+        => Proxy.UpdateNuGetPackageAsync(projectPath, packageId, version);
+    public Task<bool> UninstallNuGetPackageAsync(string projectPath, string packageId)
+        => Proxy.UninstallNuGetPackageAsync(projectPath, packageId);
+
+    // Build Extensions
+    public Task<bool> RebuildSolutionAsync() => Proxy.RebuildSolutionAsync();
+    public Task<List<BuildError>> GetBuildErrorsAsync() => Proxy.GetBuildErrorsAsync();
+
+    // Find in Files
+    public Task<List<FindInFilesResult>> FindInFilesAsync(string searchTerm, string? filePattern = null, string? folderPath = null, bool matchCase = false, bool matchWholeWord = false, bool useRegex = false)
+        => Proxy.FindInFilesAsync(searchTerm, filePattern, folderPath, matchCase, matchWholeWord, useRegex);
+
+    // Advanced Debugging
+    public Task<bool> AttachToProcessAsync(int processId) => Proxy.AttachToProcessAsync(processId);
+    public Task<List<ProcessInfo>> GetProcessesAsync() => Proxy.GetProcessesAsync();
+    public Task<List<ModuleInfo>> GetModulesAsync() => Proxy.GetModulesAsync();
+    public Task<MemoryReadResult> ReadMemoryAsync(ulong address, int size) => Proxy.ReadMemoryAsync(address, size);
+    public Task<List<RegisterInfo>> GetRegistersAsync() => Proxy.GetRegistersAsync();
+
+    // Diagnostics Extensions
+    public Task<List<DiagnosticInfo>> GetXamlBindingErrorsAsync() => Proxy.GetXamlBindingErrorsAsync();
 }

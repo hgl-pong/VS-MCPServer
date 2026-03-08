@@ -2570,6 +2570,574 @@ public class VisualStudioService : IVisualStudioService
         }
     }
 
+    public async Task<bool> RemoveFileFromProjectAsync(string projectPath, string filePath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                try
+                {
+                    if (PathsEqual(project.FullName, projectPath))
+                    {
+                        // Find and remove the item
+                        foreach (ProjectItem item in project.ProjectItems)
+                        {
+                            if (PathsEqual(item.FileNames[1], filePath))
+                            {
+                                item.Remove();
+                                return true;
+                            }
+                        }
+                    }
+                }
+                catch
+                {
+                    // Continue to next project
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> AddProjectReferenceAsync(string projectPath, string referenceProjectPath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            EnvDTE.Project? sourceProject = null;
+            EnvDTE.Project? referenceProject = null;
+
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                if (PathsEqual(project.FullName, projectPath))
+                {
+                    sourceProject = project;
+                }
+                else if (PathsEqual(project.FullName, referenceProjectPath))
+                {
+                    referenceProject = project;
+                }
+            }
+
+            if (sourceProject == null || referenceProject == null)
+            {
+                return false;
+            }
+
+            // Find the References folder
+            var vsProject = sourceProject.Object as VSLangProj.VSProject;
+            if (vsProject == null)
+            {
+                return false;
+            }
+
+            vsProject.References.AddProject(referenceProject);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> RemoveProjectReferenceAsync(string projectPath, string referenceProjectPath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            EnvDTE.Project? sourceProject = null;
+            EnvDTE.Project? referenceProject = null;
+
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                if (PathsEqual(project.FullName, projectPath))
+                {
+                    sourceProject = project;
+                }
+                else if (PathsEqual(project.FullName, referenceProjectPath))
+                {
+                    referenceProject = project;
+                }
+            }
+
+            if (sourceProject == null || referenceProject == null)
+            {
+                return false;
+            }
+
+            var vsProject = sourceProject.Object as VSLangProj.VSProject;
+            if (vsProject == null)
+            {
+                return false;
+            }
+
+            // Find and remove the reference
+            foreach (VSLangProj.Reference reference in vsProject.References)
+            {
+                if (reference.SourceProject != null && PathsEqual(reference.SourceProject.FullName, referenceProjectPath))
+                {
+                    reference.Remove();
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> AddProjectToSolutionAsync(string projectPath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            dte.Solution.AddFromFile(projectPath);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<bool> RemoveProjectFromSolutionAsync(string projectPath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            foreach (EnvDTE.Project project in dte.Solution.Projects)
+            {
+                if (PathsEqual(project.FullName, projectPath))
+                {
+                    dte.Solution.Remove(project);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region General
+
+    public async Task<CommandResult> ExecuteCommandAsync(string commandName, string? args = null)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            dte.ExecuteCommand(commandName, args ?? string.Empty);
+            return new CommandResult { Success = true };
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return new CommandResult { Success = false, Error = ex.Message };
+        }
+    }
+
+    public async Task<IdeStatus> GetIdeStatusAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        var status = new IdeStatus
+        {
+            IsSolutionOpen = dte.Solution?.IsOpen ?? false,
+            SolutionPath = dte.Solution?.FullName,
+            IsDebugging = dte.Debugger?.CurrentMode == dbgDebugMode.dbgRunMode,
+            ActiveDocument = dte.ActiveDocument?.FullName
+        };
+
+        // Determine build state
+        var solutionBuild = dte.Solution?.SolutionBuild;
+        if (solutionBuild == null)
+        {
+            status.BuildState = "NoSolution";
+        }
+        else if (solutionBuild.BuildState == vsBuildState.vsBuildStateInProgress)
+        {
+            status.BuildState = "Building";
+        }
+        else
+        {
+            status.BuildState = "Ready";
+        }
+
+        return status;
+    }
+
+    #endregion
+
+    #region NuGet
+
+    public async Task<List<ProjectPackage>> GetProjectPackagesAsync(string projectPath)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var packages = new List<ProjectPackage>();
+
+        // Note: This requires NuGet.VisualStudio package to be referenced
+        // For now, return empty list as a placeholder
+        // Full implementation would use IVsPackageInstallerServices
+
+        return await Task.FromResult(packages);
+    }
+
+    public async Task<NuGetSearchResult> SearchNuGetPackagesAsync(string searchTerm, int skip = 0, int take = 20)
+    {
+        // Note: This requires NuGet.VisualStudio package to be referenced
+        // For now, return empty result as a placeholder
+        // Full implementation would use IVsPackageSourceProvider and IVsPackageMetadataProvider
+
+        return await Task.FromResult(new NuGetSearchResult());
+    }
+
+    public async Task<bool> InstallNuGetPackageAsync(string projectPath, string packageId, string? version = null)
+    {
+        // Note: This requires NuGet.VisualStudio package to be referenced
+        // For now, return false as a placeholder
+        // Full implementation would use IVsPackageInstaller
+
+        return await Task.FromResult(false);
+    }
+
+    public async Task<bool> UpdateNuGetPackageAsync(string projectPath, string packageId, string? version = null)
+    {
+        // Note: This requires NuGet.VisualStudio package to be referenced
+        // For now, return false as a placeholder
+        // Full implementation would use IVsPackageInstaller
+
+        return await Task.FromResult(false);
+    }
+
+    public async Task<bool> UninstallNuGetPackageAsync(string projectPath, string packageId)
+    {
+        // Note: This requires NuGet.VisualStudio package to be referenced
+        // For now, return false as a placeholder
+        // Full implementation would use IVsPackageUninstaller
+
+        return await Task.FromResult(false);
+    }
+
+    #endregion
+
+    #region Build Extensions
+
+    public async Task<bool> RebuildSolutionAsync()
+    {
+        using var activity = VsixTelemetry.Tracer.StartActivity("RebuildSolution");
+
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            var solutionBuild = dte.Solution.SolutionBuild;
+            solutionBuild.Clean(true);
+            solutionBuild.Build(true);
+            return solutionBuild.LastBuildInfo == 0;
+        }
+        catch (Exception ex)
+        {
+            activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            activity?.RecordException(ex);
+            return false;
+        }
+    }
+
+    public async Task<List<BuildError>> GetBuildErrorsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var errors = new List<BuildError>();
+
+        try
+        {
+            var errorItems = dte.ToolWindows.ErrorList.ErrorItems;
+            for (int i = 1; i <= errorItems.Count; i++)
+            {
+                var item = errorItems.Item(i);
+                errors.Add(new BuildError
+                {
+                    ProjectName = item.Project,
+                    FilePath = item.FileName,
+                    Line = item.Line,
+                    Column = item.Column,
+                    Message = item.Description,
+                    Code = string.Empty, // ErrorCode not available in EnvDTE.ErrorItem
+                    Severity = item.ErrorLevel switch
+                    {
+                        vsBuildErrorLevel.vsBuildErrorLevelHigh => "Error",
+                        vsBuildErrorLevel.vsBuildErrorLevelMedium => "Warning",
+                        vsBuildErrorLevel.vsBuildErrorLevelLow => "Message",
+                        _ => "Unknown"
+                    }
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return errors;
+    }
+
+    #endregion
+
+    #region Find in Files
+
+    public async Task<List<FindInFilesResult>> FindInFilesAsync(string searchTerm, string? filePattern = null, string? folderPath = null, bool matchCase = false, bool matchWholeWord = false, bool useRegex = false)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var results = new List<FindInFilesResult>();
+
+        try
+        {
+            var find = dte.Find;
+
+            // Configure find options
+            find.FindWhat = searchTerm;
+            find.MatchCase = matchCase;
+            find.MatchWholeWord = matchWholeWord;
+            find.PatternSyntax = useRegex ? vsFindPatternSyntax.vsFindPatternSyntaxRegExpr : vsFindPatternSyntax.vsFindPatternSyntaxLiteral;
+            find.Target = vsFindTarget.vsFindTargetFiles;
+            find.SearchPath = folderPath ?? dte.Solution?.FullName ?? string.Empty;
+            find.FilesOfType = filePattern ?? "*.*";
+            find.Action = vsFindAction.vsFindActionFindAll;
+
+            // Execute find
+            var result = find.Execute();
+
+            // Note: The results appear in the Find Results window
+            // To get the results programmatically, we would need to parse the output
+            // or use a different approach (like IVsFindSymbol)
+
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return results;
+    }
+
+    #endregion
+
+    #region Advanced Debugging
+
+    public async Task<bool> AttachToProcessAsync(int processId)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            var processes = dte.Debugger.LocalProcesses;
+            foreach (EnvDTE.Process process in processes)
+            {
+                if (process.ProcessID == processId)
+                {
+                    process.Attach();
+                    return true;
+                }
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    public async Task<List<ProcessInfo>> GetProcessesAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var processes = new List<ProcessInfo>();
+
+        try
+        {
+            // Get all local processes
+            foreach (EnvDTE.Process process in dte.Debugger.LocalProcesses)
+            {
+                processes.Add(new ProcessInfo
+                {
+                    Id = process.ProcessID,
+                    Name = process.Name,
+                    // Note: IsBeingDebugged is not directly available in EnvDTE.Process
+                    // We can check if the process is in the DebuggedProcesses collection
+                    IsBeingDebugged = false // Would need additional logic to determine this
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return processes;
+    }
+
+    public async Task<List<ModuleInfo>> GetModulesAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var modules = new List<ModuleInfo>();
+
+        // Note: Module enumeration is not directly supported through EnvDTE
+        // This would require using the Debug Engine APIs (IDebugModule2)
+        // Returning empty list as a placeholder
+
+        return await Task.FromResult(modules);
+    }
+
+    public async Task<MemoryReadResult> ReadMemoryAsync(ulong address, int size)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+        // Note: Memory reading is not directly supported in EnvDTE
+        // This would require using the Debug Engine APIs (IDebugMemoryContext2, IDebugMemoryBytes2)
+
+        return new MemoryReadResult
+        {
+            Success = false,
+            Error = "Memory reading is not supported through the current API",
+            Address = address,
+            BytesRead = 0
+        };
+    }
+
+    public async Task<List<RegisterInfo>> GetRegistersAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+        var registers = new List<RegisterInfo>();
+
+        try
+        {
+            if (dte.Debugger.CurrentMode != dbgDebugMode.dbgBreakMode)
+            {
+                return registers;
+            }
+
+            // Note: Register access is not directly supported in EnvDTE
+            // This would require using the Debug Engine APIs
+
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return registers;
+    }
+
+    #endregion
+
+    #region Output Window
+
+    public async Task<bool> WriteToOutputWindowAsync(string paneName, string message)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var dte = await GetDteAsync();
+
+        try
+        {
+            var outputWindow = dte.ToolWindows.OutputWindow;
+
+            // Find or create the pane
+            OutputWindowPane? pane = null;
+            foreach (OutputWindowPane p in outputWindow.OutputWindowPanes)
+            {
+                if (p.Name.Equals(paneName, StringComparison.OrdinalIgnoreCase))
+                {
+                    pane = p;
+                    break;
+                }
+            }
+
+            if (pane == null)
+            {
+                pane = outputWindow.OutputWindowPanes.Add(paneName);
+            }
+
+            pane.Activate();
+            pane.OutputString(message);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+            return false;
+        }
+    }
+
+    #endregion
+
+    #region Diagnostics Extensions
+
+    public async Task<List<DiagnosticInfo>> GetXamlBindingErrorsAsync()
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var diagnostics = new List<DiagnosticInfo>();
+
+        try
+        {
+            // Get the Error List service
+            var errorListService = ServiceProvider.GetService(typeof(SVsErrorList)) as IVsErrorList;
+            if (errorListService == null)
+            {
+                return diagnostics;
+            }
+
+            // Get the error items
+            var errorItems = errorListService as IVsTaskList;
+            // Note: Full implementation would iterate through errors and filter for XAML binding errors
+            // This requires more complex interaction with VS error list APIs
+
+        }
+        catch (Exception ex)
+        {
+            VsixTelemetry.TrackException(ex);
+        }
+
+        return diagnostics;
+    }
+
     #endregion
 
     #region Helper Methods

@@ -66,7 +66,7 @@ gh issue close <number>
 **VSIX Manifest:**
 - Version range: `[17.0,19.0)` — supports VS 2022 through VS 2026
 - Architectures: AMD64 and ARM64
-- Prerequisites: List Community edition only (captures Pro/Enterprise)
+- Editions: Community, Pro, Enterprise (must list each explicitly)
 
 **CI/CD:**
 - Build workflow: Automated build on push/PR

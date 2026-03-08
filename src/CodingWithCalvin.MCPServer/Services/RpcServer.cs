@@ -258,10 +258,57 @@ public class RpcServer : IRpcServer, IVisualStudioRpc
     // Output Windows
     public Task<string> GetBuildOutputAsync() => _vsService.GetBuildOutputAsync();
     public Task<string> GetDebugOutputAsync() => _vsService.GetDebugOutputAsync();
+    public Task<bool> WriteToOutputWindowAsync(string paneName, string message)
+        => _vsService.WriteToOutputWindowAsync(paneName, message);
 
     // Project Operations
     public Task<bool> AddFileToProjectAsync(string projectPath, string filePath)
         => _vsService.AddFileToProjectAsync(projectPath, filePath);
     public Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null)
         => _vsService.CreateProjectItemAsync(projectPath, itemTemplate, itemName, folderPath);
+    public Task<bool> RemoveFileFromProjectAsync(string projectPath, string filePath)
+        => _vsService.RemoveFileFromProjectAsync(projectPath, filePath);
+    public Task<bool> AddProjectReferenceAsync(string projectPath, string referenceProjectPath)
+        => _vsService.AddProjectReferenceAsync(projectPath, referenceProjectPath);
+    public Task<bool> RemoveProjectReferenceAsync(string projectPath, string referenceProjectPath)
+        => _vsService.RemoveProjectReferenceAsync(projectPath, referenceProjectPath);
+    public Task<bool> AddProjectToSolutionAsync(string projectPath)
+        => _vsService.AddProjectToSolutionAsync(projectPath);
+    public Task<bool> RemoveProjectFromSolutionAsync(string projectPath)
+        => _vsService.RemoveProjectFromSolutionAsync(projectPath);
+
+    // General
+    public Task<CommandResult> ExecuteCommandAsync(string commandName, string? args = null)
+        => _vsService.ExecuteCommandAsync(commandName, args);
+    public Task<IdeStatus> GetIdeStatusAsync() => _vsService.GetIdeStatusAsync();
+
+    // NuGet
+    public Task<List<ProjectPackage>> GetProjectPackagesAsync(string projectPath)
+        => _vsService.GetProjectPackagesAsync(projectPath);
+    public Task<NuGetSearchResult> SearchNuGetPackagesAsync(string searchTerm, int skip = 0, int take = 20)
+        => _vsService.SearchNuGetPackagesAsync(searchTerm, skip, take);
+    public Task<bool> InstallNuGetPackageAsync(string projectPath, string packageId, string? version = null)
+        => _vsService.InstallNuGetPackageAsync(projectPath, packageId, version);
+    public Task<bool> UpdateNuGetPackageAsync(string projectPath, string packageId, string? version = null)
+        => _vsService.UpdateNuGetPackageAsync(projectPath, packageId, version);
+    public Task<bool> UninstallNuGetPackageAsync(string projectPath, string packageId)
+        => _vsService.UninstallNuGetPackageAsync(projectPath, packageId);
+
+    // Build Extensions
+    public Task<bool> RebuildSolutionAsync() => _vsService.RebuildSolutionAsync();
+    public Task<List<BuildError>> GetBuildErrorsAsync() => _vsService.GetBuildErrorsAsync();
+
+    // Find in Files
+    public Task<List<FindInFilesResult>> FindInFilesAsync(string searchTerm, string? filePattern = null, string? folderPath = null, bool matchCase = false, bool matchWholeWord = false, bool useRegex = false)
+        => _vsService.FindInFilesAsync(searchTerm, filePattern, folderPath, matchCase, matchWholeWord, useRegex);
+
+    // Advanced Debugging
+    public Task<bool> AttachToProcessAsync(int processId) => _vsService.AttachToProcessAsync(processId);
+    public Task<List<ProcessInfo>> GetProcessesAsync() => _vsService.GetProcessesAsync();
+    public Task<List<ModuleInfo>> GetModulesAsync() => _vsService.GetModulesAsync();
+    public Task<MemoryReadResult> ReadMemoryAsync(ulong address, int size) => _vsService.ReadMemoryAsync(address, size);
+    public Task<List<RegisterInfo>> GetRegistersAsync() => _vsService.GetRegistersAsync();
+
+    // Diagnostics Extensions
+    public Task<List<DiagnosticInfo>> GetXamlBindingErrorsAsync() => _vsService.GetXamlBindingErrorsAsync();
 }

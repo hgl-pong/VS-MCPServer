@@ -11,10 +11,25 @@
         <Tags>MCP, AI, Claude, LLM, Automation</Tags>
     </Metadata>
     <Installation>
+        <!-- Community -->
         <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0,19.0)">
             <ProductArchitecture>amd64</ProductArchitecture>
         </InstallationTarget>
         <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0,19.0)">
+            <ProductArchitecture>arm64</ProductArchitecture>
+        </InstallationTarget>
+        <!-- Pro -->
+        <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0,19.0)">
+            <ProductArchitecture>amd64</ProductArchitecture>
+        </InstallationTarget>
+        <InstallationTarget Id="Microsoft.VisualStudio.Pro" Version="[17.0,19.0)">
+            <ProductArchitecture>arm64</ProductArchitecture>
+        </InstallationTarget>
+        <!-- Enterprise -->
+        <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0,19.0)">
+            <ProductArchitecture>amd64</ProductArchitecture>
+        </InstallationTarget>
+        <InstallationTarget Id="Microsoft.VisualStudio.Enterprise" Version="[17.0,19.0)">
             <ProductArchitecture>arm64</ProductArchitecture>
         </InstallationTarget>
     </Installation>

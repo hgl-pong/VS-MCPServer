@@ -100,10 +100,44 @@ public interface IVisualStudioRpc
     // Output Windows
     Task<string> GetBuildOutputAsync();
     Task<string> GetDebugOutputAsync();
+    Task<bool> WriteToOutputWindowAsync(string paneName, string message);
 
     // Project Operations
     Task<bool> AddFileToProjectAsync(string projectPath, string filePath);
     Task<bool> CreateProjectItemAsync(string projectPath, string itemTemplate, string itemName, string? folderPath = null);
+    Task<bool> RemoveFileFromProjectAsync(string projectPath, string filePath);
+    Task<bool> AddProjectReferenceAsync(string projectPath, string referenceProjectPath);
+    Task<bool> RemoveProjectReferenceAsync(string projectPath, string referenceProjectPath);
+    Task<bool> AddProjectToSolutionAsync(string projectPath);
+    Task<bool> RemoveProjectFromSolutionAsync(string projectPath);
+
+    // General
+    Task<CommandResult> ExecuteCommandAsync(string commandName, string? args = null);
+    Task<IdeStatus> GetIdeStatusAsync();
+
+    // NuGet
+    Task<List<ProjectPackage>> GetProjectPackagesAsync(string projectPath);
+    Task<NuGetSearchResult> SearchNuGetPackagesAsync(string searchTerm, int skip = 0, int take = 20);
+    Task<bool> InstallNuGetPackageAsync(string projectPath, string packageId, string? version = null);
+    Task<bool> UpdateNuGetPackageAsync(string projectPath, string packageId, string? version = null);
+    Task<bool> UninstallNuGetPackageAsync(string projectPath, string packageId);
+
+    // Build Extensions
+    Task<bool> RebuildSolutionAsync();
+    Task<List<BuildError>> GetBuildErrorsAsync();
+
+    // Find in Files
+    Task<List<FindInFilesResult>> FindInFilesAsync(string searchTerm, string? filePattern = null, string? folderPath = null, bool matchCase = false, bool matchWholeWord = false, bool useRegex = false);
+
+    // Advanced Debugging
+    Task<bool> AttachToProcessAsync(int processId);
+    Task<List<ProcessInfo>> GetProcessesAsync();
+    Task<List<ModuleInfo>> GetModulesAsync();
+    Task<MemoryReadResult> ReadMemoryAsync(ulong address, int size);
+    Task<List<RegisterInfo>> GetRegistersAsync();
+
+    // Diagnostics Extensions
+    Task<List<DiagnosticInfo>> GetXamlBindingErrorsAsync();
 }
 
 /// <summary>

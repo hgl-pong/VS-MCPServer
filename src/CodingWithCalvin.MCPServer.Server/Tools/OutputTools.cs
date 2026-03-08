@@ -1,8 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Threading.Tasks;
-using CodingWithCalvin.MCPServer.Shared;
-using CodingWithCalvin.MCPServer.Shared.Models;
 using ModelContextProtocol.Server;
 
 namespace CodingWithCalvin.MCPServer.Server.Tools;
@@ -11,26 +9,37 @@ namespace CodingWithCalvin.MCPServer.Server.Tools;
 public class OutputTools
 {
     private readonly RpcClient _rpcClient;
-    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly JsonSerializerOptions _jsonOptions;
 
     public OutputTools(RpcClient rpcClient)
     {
         _rpcClient = rpcClient;
+        _jsonOptions = new JsonSerializerOptions { WriteIndented = true };
     }
 
     [McpServerTool(Name = "output_get_build", ReadOnly = true)]
-    [Description("Get the contents of the Build output window.")]
+    [Description("Get the contents of the Visual Studio Build Output window.")]
     public async Task<string> GetBuildOutputAsync()
     {
         var output = await _rpcClient.GetBuildOutputAsync();
-        return JsonSerializer.Serialize(new { output }, _jsonOptions);
+        return output;
     }
 
     [McpServerTool(Name = "output_get_debug", ReadOnly = true)]
-    [Description("Get the contents of the Debug output window (including Debug.WriteLine output).")]
+    [Description("Get the contents of the Visual Studio Debug Output window.")]
     public async Task<string> GetDebugOutputAsync()
     {
         var output = await _rpcClient.GetDebugOutputAsync();
-        return JsonSerializer.Serialize(new { output }, _jsonOptions);
+        return output;
+    }
+
+    [McpServerTool(Name = "output_write", ReadOnly = false)]
+    [Description("Write a message to a Visual Studio Output window pane. Creates the pane if it doesn't exist.")]
+    public async Task<string> WriteToOutputWindowAsync(
+        [Description("The name of the output pane (e.g., 'Build', 'Debug', or custom name)")] string paneName,
+        [Description("The message to write")] string message)
+    {
+        var success = await _rpcClient.WriteToOutputWindowAsync(paneName, message);
+        return JsonSerializer.Serialize(new { success, paneName }, _jsonOptions);
     }
 }

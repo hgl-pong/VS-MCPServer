@@ -1,7 +1,6 @@
 using System.ComponentModel;
 using System.Text.Json;
 using System.Threading.Tasks;
-using CodingWithCalvin.MCPServer.Shared;
 using CodingWithCalvin.MCPServer.Shared.Models;
 using ModelContextProtocol.Server;
 
@@ -11,19 +10,19 @@ namespace CodingWithCalvin.MCPServer.Server.Tools;
 public class DiagnosticTools
 {
     private readonly RpcClient _rpcClient;
-    private readonly JsonSerializerOptions _jsonOptions = new() { WriteIndented = true };
+    private readonly JsonSerializerOptions _jsonOptions;
 
     public DiagnosticTools(RpcClient rpcClient)
     {
         _rpcClient = rpcClient;
+        _jsonOptions = new JsonSerializerOptions { WriteIndented = true };
     }
 
     [McpServerTool(Name = "diagnostics_get", ReadOnly = true)]
     [Description("Get Roslyn diagnostics (errors, warnings, suggestions) for a file or the entire solution.")]
     public async Task<string> GetDiagnosticsAsync(
         [Description("Optional file path to get diagnostics for. If omitted, returns diagnostics for the entire solution.")] string? filePath = null,
-        [Description("Optional severity filter: 'error', 'warning', or 'info'")] string? severity = null
-    )
+        [Description("Optional severity filter: 'error', 'warning', or 'info'")] string? severity = null)
     {
         var diagnostics = await _rpcClient.GetDiagnosticsAsync(filePath, severity);
         return JsonSerializer.Serialize(diagnostics, _jsonOptions);
@@ -37,7 +36,15 @@ public class DiagnosticTools
         return JsonSerializer.Serialize(errors, _jsonOptions);
     }
 
-    [McpServerTool(Name = "code_fix_apply")]
+    [McpServerTool(Name = "diagnostics_binding_errors", ReadOnly = true)]
+    [Description("Get XAML binding errors and warnings from the Visual Studio Error List. Useful for diagnosing WPF data binding issues.")]
+    public async Task<string> GetXamlBindingErrorsAsync()
+    {
+        var errors = await _rpcClient.GetXamlBindingErrorsAsync();
+        return JsonSerializer.Serialize(errors, _jsonOptions);
+    }
+
+    [McpServerTool(Name = "code_fix_apply", ReadOnly = false)]
     [Description("Apply a suggested code fix for a diagnostic. Use preview=true to see what would change without applying.")]
     public async Task<string> ApplyCodeFixAsync(
         [Description("The file path")] string filePath,
@@ -45,8 +52,7 @@ public class DiagnosticTools
         [Description("The column number")] int column,
         [Description("The diagnostic ID to fix")] string diagnosticId,
         [Description("Optional specific fix ID if multiple fixes available")] string? fixId = null,
-        [Description("If true, preview changes without applying")] bool preview = false
-    )
+        [Description("If true, preview changes without applying")] bool preview = false)
     {
         var request = new ApplyCodeFixRequest
         {

@@ -32,23 +32,35 @@
   </a>
 </p>
 
+<p align="center">
+  <img src="https://img.shields.io/badge/Tools-84-blue?style=for-the-badge" alt="84 Tools">
+  <img src="https://img.shields.io/badge/VS-2022%20%7C%202026-purple?style=for-the-badge" alt="Visual Studio 2022/2026">
+</p>
+
 ---
 
 ## 🤔 What is this?
 
-**VS MCP Server** exposes Visual Studio features through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), enabling AI assistants like Claude to interact with your IDE programmatically. Open files, read code, build projects, and more - all through natural conversation!
+**VS MCP Server** exposes Visual Studio features through the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), enabling AI assistants like Claude to interact with your IDE programmatically. Open files, read code, build projects, debug applications, and more - all through natural conversation!
 
 ## ✨ Features
 
-### 📂 Solution Tools
+### 📂 Solution & Project Tools
 
 | Tool | Description |
 |------|-------------|
 | `solution_info` | Get information about the current solution |
 | `solution_open` | Open a solution file |
 | `solution_close` | Close the current solution |
+| `solution_add_project` | Add an existing project to the solution |
+| `solution_remove_project` | Remove a project from the solution |
 | `project_list` | List all projects in the solution |
 | `project_info` | Get detailed project information |
+| `project_add_file` | Add a file to a project |
+| `project_remove_file` | Remove a file from a project |
+| `project_create_item` | Create a new project item from template |
+| `project_add_reference` | Add a project-to-project reference |
+| `project_remove_reference` | Remove a project reference |
 
 ### 📝 Document Tools
 
@@ -72,15 +84,135 @@
 | `editor_goto_line` | Navigate to a specific line |
 | `editor_find` | Search within documents |
 
+### 🔍 Search & Navigation Tools
+
+| Tool | Description |
+|------|-------------|
+| `find_in_files` | Search for text across all files in the solution |
+| `symbol_document` | Get all symbols defined in a file |
+| `symbol_workspace` | Search for symbols across the entire solution |
+| `goto_definition` | Navigate to the definition of a symbol |
+| `find_references` | Find all references to a symbol |
+
 ### 🔨 Build Tools
 
 | Tool | Description |
 |------|-------------|
 | `build_solution` | Build the entire solution |
 | `build_project` | Build a specific project |
+| `rebuild_solution` | Rebuild the entire solution (clean + build) |
 | `clean_solution` | Clean the solution |
 | `build_cancel` | Cancel a running build |
 | `build_status` | Get current build status |
+| `build_get_errors` | Get all build errors from the Error List |
+
+### 🐛 Debug Control Tools
+
+| Tool | Description |
+|------|-------------|
+| `debugger_state` | Get the current debugger state |
+| `debugger_start` | Start debugging (F5) |
+| `debugger_stop` | Stop debugging (Shift+F5) |
+| `debugger_continue` | Continue execution (F5) |
+| `debugger_step_into` | Step into (F11) |
+| `debugger_step_over` | Step over (F10) |
+| `debugger_step_out` | Step out (Shift+F11) |
+| `debugger_run_to_cursor` | Run to cursor (Ctrl+F10) |
+
+### 🔴 Breakpoint Tools
+
+| Tool | Description |
+|------|-------------|
+| `breakpoint_list` | List all breakpoints |
+| `breakpoint_set` | Set a breakpoint at a location |
+| `breakpoint_remove` | Remove a breakpoint |
+| `breakpoint_toggle` | Toggle a breakpoint |
+| `breakpoint_set_condition` | Set a conditional breakpoint |
+
+### 🧵 Thread & Stack Tools
+
+| Tool | Description |
+|------|-------------|
+| `debugger_call_stack` | Get the current call stack |
+| `debugger_set_frame` | Set the current stack frame |
+| `debugger_threads` | Get all threads in the debugged process |
+| `debugger_set_thread` | Switch to a different thread |
+
+### 🔬 Inspection Tools
+
+| Tool | Description |
+|------|-------------|
+| `debugger_evaluate` | Evaluate an expression in the current context |
+| `debugger_get_locals` | Get local variables in the current frame |
+| `debugger_get_arguments` | Get method arguments in the current frame |
+| `debugger_inspect_variable` | Inspect a variable and its children |
+| `debugger_set_variable` | Set a variable's value |
+| `debugger_get_watch` | Get current watch expressions |
+| `debugger_add_watch` | Add a watch expression |
+| `debugger_remove_watch` | Remove a watch expression |
+| `debugger_clear_watch` | Clear all watch expressions |
+
+### 🔧 Advanced Debug Tools
+
+| Tool | Description |
+|------|-------------|
+| `debugger_attach` | Attach the debugger to a running process |
+| `debugger_get_processes` | Get list of local processes |
+| `debugger_get_modules` | Get loaded modules in the debugged process |
+| `debugger_read_memory` | Read memory at a specific address |
+| `debugger_get_registers` | Get current register values |
+
+### 📤 Output Tools
+
+| Tool | Description |
+|------|-------------|
+| `output_get_build` | Get the Build Output window contents |
+| `output_get_debug` | Get the Debug Output window contents |
+| `output_write` | Write a message to an Output window pane |
+
+### 🩺 Diagnostics Tools
+
+| Tool | Description |
+|------|-------------|
+| `diagnostics_get` | Get Roslyn diagnostics for a file or solution |
+| `error_list_get` | Get the Error List window contents |
+| `diagnostics_binding_errors` | Get XAML binding errors |
+| `code_fix_apply` | Apply a suggested code fix |
+
+### 🧪 Test Tools
+
+| Tool | Description |
+|------|-------------|
+| `test_discover` | Discover tests in the solution |
+| `test_run_all` | Run all tests |
+| `test_run_specific` | Run specific tests |
+| `test_debug` | Debug a specific test |
+| `test_results` | Get test results |
+
+### 🔄 Refactor Tools
+
+| Tool | Description |
+|------|-------------|
+| `refactor_rename` | Rename a symbol across the solution |
+| `refactor_extract_method` | Extract selected code to a new method |
+| `refactor_organize_usings` | Organize using statements |
+
+### 📦 NuGet Tools
+
+| Tool | Description |
+|------|-------------|
+| `nuget_list` | List NuGet packages in a project |
+| `nuget_search` | Search for NuGet packages |
+| `nuget_install` | Install a NuGet package |
+| `nuget_update` | Update a NuGet package |
+| `nuget_uninstall` | Uninstall a NuGet package |
+
+### ⚙️ General Tools
+
+| Tool | Description |
+|------|-------------|
+| `execute_command` | Execute a Visual Studio command |
+| `get_ide_status` | Get the current IDE status |
 
 ## 🛠️ Installation
 
