@@ -104,7 +104,7 @@ public class DocumentTools
         [Description("Ending column number (1-based). Use same as startColumn to place cursor without selection.")] int endColumn)
     {
         var success = await _rpcClient.SetSelectionAsync(path, startLine, startColumn, endLine, endColumn);
-        return success ? "Selection set" : "Failed to set selection (is the document open?)";
+        return JsonSerializer.Serialize(new { success, error = success ? null : "Failed to set selection. Ensure the document is open in Visual Studio." }, _jsonOptions);
     }
 
     [McpServerTool(Name = "editor_insert", Destructive = false)]
@@ -113,7 +113,7 @@ public class DocumentTools
         [Description("The text to insert. Can include newlines for multi-line inserts.")] string text)
     {
         var success = await _rpcClient.InsertTextAsync(text);
-        return success ? "Text inserted" : "Failed to insert text (no active document?)";
+        return JsonSerializer.Serialize(new { success, error = success ? null : "Failed to insert text. Ensure there is an active document in Visual Studio." }, _jsonOptions);
     }
 
     [McpServerTool(Name = "editor_replace", Destructive = true, Idempotent = true)]
@@ -127,12 +127,12 @@ public class DocumentTools
     }
 
     [McpServerTool(Name = "editor_goto_line", Destructive = false, Idempotent = true)]
-    [Description("Navigate to a specific line in the active document and place the cursor at the beginning of that line.")]
+    [Description("Navigate to a specific line in the active document. The document must be open and active in VS.")]
     public async Task<string> GoToLineAsync(
         [Description("The line number to navigate to (1-based, first line is 1).")] int line)
     {
         var success = await _rpcClient.GoToLineAsync(line);
-        return success ? $"Navigated to line {line}" : "Failed to navigate (no active document?)";
+        return JsonSerializer.Serialize(new { success, line, error = success ? null : "Failed to navigate. Ensure a document is open and active in Visual Studio." }, _jsonOptions);
     }
 
     [McpServerTool(Name = "editor_find", ReadOnly = true)]

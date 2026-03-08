@@ -9,9 +9,20 @@ using CodingWithCalvin.MCPServer.Shared.Models;
 using CodingWithCalvin.Otel4Vsix;
 using EnvDTE;
 using EnvDTE80;
+using Microsoft.CodeAnalysis;
 using Microsoft.VisualStudio.Shell;
 using Microsoft.VisualStudio.Shell.Interop;
 using ActivityStatusCode = System.Diagnostics.ActivityStatusCode;
+using VsWorkspace = Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace;
+// Resolve type conflicts between Roslyn, EnvDTE and Shared.Models
+using SymbolInfo = CodingWithCalvin.MCPServer.Shared.Models.SymbolInfo;
+using SymbolKind = CodingWithCalvin.MCPServer.Shared.Models.SymbolKind;
+using SolutionInfo = CodingWithCalvin.MCPServer.Shared.Models.SolutionInfo;
+using ProjectInfo = CodingWithCalvin.MCPServer.Shared.Models.ProjectInfo;
+using DocumentInfo = CodingWithCalvin.MCPServer.Shared.Models.DocumentInfo;
+using DiagnosticSeverity = CodingWithCalvin.MCPServer.Shared.Models.DiagnosticSeverity;
+using EnvDTETextDocument = EnvDTE.TextDocument;
+using EnvDTEDocument = EnvDTE.Document;
 
 namespace CodingWithCalvin.MCPServer.Services;
 
@@ -24,6 +35,25 @@ public class VisualStudioService : IVisualStudioService
     private IServiceProvider ServiceProvider =>
         _serviceProvider ??= MCPServerPackage.Instance as IServiceProvider
             ?? throw new InvalidOperationException("Package not initialized");
+
+    private Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace? _workspace;
+
+    private Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace? Workspace
+    {
+        get
+        {
+            if (_workspace == null)
+            {
+                ThreadHelper.JoinableTaskFactory.Run(async () =>
+                {
+                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+                    _workspace = ServiceProvider.GetService(typeof(Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace)) 
+                        as Microsoft.VisualStudio.LanguageServices.VisualStudioWorkspace;
+                });
+            }
+            return _workspace;
+        }
+    }
 
     private async Task<DTE2> GetDteAsync()
     {
@@ -124,7 +154,7 @@ public class VisualStudioService : IVisualStudioService
         var dte = await GetDteAsync();
         var documents = new List<DocumentInfo>();
 
-        foreach (Document doc in dte.Documents)
+        foreach (EnvDTEDocument doc in dte.Documents)
         {
             try
             {
@@ -188,7 +218,7 @@ public class VisualStudioService : IVisualStudioService
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
         var dte = await GetDteAsync();
 
-        foreach (Document doc in dte.Documents)
+        foreach (EnvDTEDocument doc in dte.Documents)
         {
             try
             {
@@ -212,13 +242,13 @@ public class VisualStudioService : IVisualStudioService
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
         var dte = await GetDteAsync();
 
-        foreach (Document doc in dte.Documents)
+        foreach (EnvDTEDocument doc in dte.Documents)
         {
             try
             {
                 if (PathsEqual(doc.FullName, path))
                 {
-                    var textDoc = doc.Object("TextDocument") as TextDocument;
+                    var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
                     if (textDoc != null)
                     {
                         var editPoint = textDoc.StartPoint.CreateEditPoint();
@@ -245,13 +275,13 @@ public class VisualStudioService : IVisualStudioService
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
         var dte = await GetDteAsync();
 
-        foreach (Document doc in dte.Documents)
+        foreach (EnvDTEDocument doc in dte.Documents)
         {
             try
             {
                 if (PathsEqual(doc.FullName, path))
                 {
-                    var textDoc = doc.Object("TextDocument") as TextDocument;
+                    var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
                     if (textDoc != null)
                     {
                         var editPoint = textDoc.StartPoint.CreateEditPoint();
@@ -281,7 +311,7 @@ public class VisualStudioService : IVisualStudioService
             return null;
         }
 
-        var textDoc = doc.Object("TextDocument") as TextDocument;
+        var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
         if (textDoc == null)
         {
             return null;
@@ -304,13 +334,13 @@ public class VisualStudioService : IVisualStudioService
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
         var dte = await GetDteAsync();
 
-        foreach (Document doc in dte.Documents)
+        foreach (EnvDTEDocument doc in dte.Documents)
         {
             try
             {
                 if (PathsEqual(doc.FullName, path))
                 {
-                    var textDoc = doc.Object("TextDocument") as TextDocument;
+                    var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
                     if (textDoc != null)
                     {
                         textDoc.Selection.MoveToLineAndOffset(startLine, startColumn);
@@ -339,7 +369,7 @@ public class VisualStudioService : IVisualStudioService
             return false;
         }
 
-        var textDoc = doc.Object("TextDocument") as TextDocument;
+        var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
         if (textDoc == null)
         {
             return false;
@@ -360,7 +390,7 @@ public class VisualStudioService : IVisualStudioService
             return false;
         }
 
-        var textDoc = doc.Object("TextDocument") as TextDocument;
+        var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
         if (textDoc == null)
         {
             return false;
@@ -391,7 +421,7 @@ public class VisualStudioService : IVisualStudioService
             return false;
         }
 
-        var textDoc = doc.Object("TextDocument") as TextDocument;
+        var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
         if (textDoc == null)
         {
             return false;
@@ -413,7 +443,7 @@ public class VisualStudioService : IVisualStudioService
             return results;
         }
 
-        var textDoc = doc.Object("TextDocument") as TextDocument;
+        var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
         if (textDoc == null)
         {
             return results;
@@ -553,6 +583,57 @@ public class VisualStudioService : IVisualStudioService
     public async Task<List<SymbolInfo>> GetDocumentSymbolsAsync(string path)
     {
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+        var symbols = new List<SymbolInfo>();
+
+        var workspace = Workspace;
+        if (workspace == null)
+        {
+            // Fallback to EnvDTE if Workspace is not available
+            return await GetDocumentSymbolsEnvDteAsync(path);
+        }
+
+        var normalizedPath = NormalizePath(path);
+        
+        // Find the document in the workspace
+        var document = workspace.CurrentSolution.GetDocumentIdsWithFilePath(normalizedPath).FirstOrDefault();
+        if (document == null)
+        {
+            // Try with forward slashes
+            var forwardSlashPath = normalizedPath.Replace('\\', '/');
+            document = workspace.CurrentSolution.GetDocumentIdsWithFilePath(forwardSlashPath).FirstOrDefault();
+        }
+
+        if (document == null)
+        {
+            return symbols;
+        }
+
+        var doc = workspace.CurrentSolution.GetDocument(document);
+        if (doc == null)
+        {
+            return symbols;
+        }
+
+        var semanticModel = await doc.GetSemanticModelAsync();
+        if (semanticModel == null)
+        {
+            return symbols;
+        }
+
+        var root = await doc.GetSyntaxRootAsync();
+        if (root == null)
+        {
+            return symbols;
+        }
+
+        // Extract symbols from the syntax tree
+        ExtractRoslynSymbols(root, semanticModel, symbols, normalizedPath, doc);
+        return symbols;
+    }
+
+    private async Task<List<SymbolInfo>> GetDocumentSymbolsEnvDteAsync(string path)
+    {
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
         var dte = await GetDteAsync();
         var symbols = new List<SymbolInfo>();
 
@@ -577,6 +658,122 @@ public class VisualStudioService : IVisualStudioService
         ExtractSymbols(fileCodeModel.CodeElements, symbols, normalizedPath, string.Empty);
         return symbols;
     }
+
+    private void ExtractRoslynSymbols(
+        Microsoft.CodeAnalysis.SyntaxNode root,
+        Microsoft.CodeAnalysis.SemanticModel semanticModel,
+        List<SymbolInfo> symbols,
+        string filePath,
+        Microsoft.CodeAnalysis.Document doc)
+    {
+        var declaredSymbols = new HashSet<Microsoft.CodeAnalysis.ISymbol>(Microsoft.CodeAnalysis.SymbolEqualityComparer.Default);
+
+        // Collect all declared symbols in the document
+        foreach (var node in root.DescendantNodes())
+        {
+            var declaredSymbol = semanticModel.GetDeclaredSymbol(node);
+            if (declaredSymbol != null && declaredSymbols.Add(declaredSymbol))
+            {
+                var symbolInfo = CreateSymbolInfo(declaredSymbol, filePath, doc);
+                if (symbolInfo != null)
+                {
+                    // Add child symbols
+                    AddChildSymbols(declaredSymbol, symbolInfo, filePath, doc, declaredSymbols);
+                    symbols.Add(symbolInfo);
+                }
+            }
+        }
+    }
+
+    private void AddChildSymbols(
+        Microsoft.CodeAnalysis.ISymbol parentSymbol,
+        SymbolInfo parentInfo,
+        string filePath,
+        Microsoft.CodeAnalysis.Document doc,
+        HashSet<Microsoft.CodeAnalysis.ISymbol> visitedSymbols)
+    {
+        if (parentSymbol is Microsoft.CodeAnalysis.INamedTypeSymbol typeSymbol)
+        {
+            foreach (var member in typeSymbol.GetMembers())
+            {
+                if (!member.IsImplicitlyDeclared && visitedSymbols.Add(member))
+                {
+                    var childInfo = CreateSymbolInfo(member, filePath, doc, parentSymbol.Name);
+                    if (childInfo != null)
+                    {
+                        parentInfo.Children.Add(childInfo);
+                    }
+                }
+            }
+        }
+        else if (parentSymbol is Microsoft.CodeAnalysis.INamespaceSymbol namespaceSymbol)
+        {
+            foreach (var member in namespaceSymbol.GetMembers())
+            {
+                if (!member.IsImplicitlyDeclared && visitedSymbols.Add(member))
+                {
+                    var childInfo = CreateSymbolInfo(member, filePath, doc);
+                    if (childInfo != null)
+                    {
+                        parentInfo.Children.Add(childInfo);
+                    }
+                }
+            }
+        }
+    }
+
+    private SymbolInfo? CreateSymbolInfo(
+        Microsoft.CodeAnalysis.ISymbol symbol,
+        string filePath,
+        Microsoft.CodeAnalysis.Document doc,
+        string? containerName = null)
+    {
+        var locations = symbol.Locations;
+        var location = locations.FirstOrDefault(l => l.IsInSource && l.SourceTree?.FilePath == filePath);
+        
+        if (location == null)
+        {
+            // Try to find any source location
+            location = locations.FirstOrDefault(l => l.IsInSource);
+        }
+
+        if (location == null)
+        {
+            return null;
+        }
+
+        var lineSpan = location.GetLineSpan();
+        var startLine = lineSpan.StartLinePosition.Line + 1;
+        var startColumn = lineSpan.StartLinePosition.Character + 1;
+        var endLine = lineSpan.EndLinePosition.Line + 1;
+        var endColumn = lineSpan.EndLinePosition.Character + 1;
+
+        return new SymbolInfo
+        {
+            Name = symbol.Name,
+            FullName = symbol.ToDisplayString(Microsoft.CodeAnalysis.SymbolDisplayFormat.FullyQualifiedFormat),
+            Kind = MapRoslynSymbolKind(symbol.Kind),
+            FilePath = filePath,
+            StartLine = startLine,
+            StartColumn = startColumn,
+            EndLine = endLine,
+            EndColumn = endColumn,
+            ContainerName = containerName ?? symbol.ContainingType?.Name ?? symbol.ContainingNamespace?.ToDisplayString() ?? string.Empty
+        };
+    }
+
+    private static SymbolKind MapRoslynSymbolKind(Microsoft.CodeAnalysis.SymbolKind kind) => kind switch
+    {
+        Microsoft.CodeAnalysis.SymbolKind.Namespace => SymbolKind.Namespace,
+        Microsoft.CodeAnalysis.SymbolKind.NamedType => SymbolKind.Class, // Will be refined by TypeKind
+        Microsoft.CodeAnalysis.SymbolKind.Method => SymbolKind.Function,
+        Microsoft.CodeAnalysis.SymbolKind.Property => SymbolKind.Property,
+        Microsoft.CodeAnalysis.SymbolKind.Field => SymbolKind.Field,
+        Microsoft.CodeAnalysis.SymbolKind.Event => SymbolKind.Event,
+        Microsoft.CodeAnalysis.SymbolKind.Parameter => SymbolKind.Parameter,
+        Microsoft.CodeAnalysis.SymbolKind.Local => SymbolKind.Variable,
+        _ => SymbolKind.Unknown
+    };
 
     private void ExtractSymbols(CodeElements elements, List<SymbolInfo> symbols, string filePath, string containerName)
     {
@@ -813,7 +1010,7 @@ public class VisualStudioService : IVisualStudioService
                 return result;
             }
 
-            var textDoc = doc.Object("TextDocument") as TextDocument;
+            var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
             if (textDoc == null)
             {
                 return result;
@@ -831,7 +1028,7 @@ public class VisualStudioService : IVisualStudioService
             var newDoc = dte.ActiveDocument;
             if (newDoc != null)
             {
-                var newTextDoc = newDoc.Object("TextDocument") as TextDocument;
+                var newTextDoc = newDoc.Object("EnvDTETextDocument") as EnvDTETextDocument;
                 if (newTextDoc != null)
                 {
                     var newPath = newDoc.FullName;
@@ -868,7 +1065,7 @@ public class VisualStudioService : IVisualStudioService
         return result;
     }
 
-    private static string GetWordAtPosition(TextDocument textDoc, int line, int column)
+    private static string GetWordAtPosition(EnvDTETextDocument textDoc, int line, int column)
     {
         ThreadHelper.ThrowIfNotOnUIThread();
 
@@ -910,7 +1107,7 @@ public class VisualStudioService : IVisualStudioService
                 return result;
             }
 
-            var textDoc = doc.Object("TextDocument") as TextDocument;
+            var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
             if (textDoc == null)
             {
                 return result;
@@ -2304,7 +2501,7 @@ public class VisualStudioService : IVisualStudioService
                 return changedFiles;
             }
 
-            var textDoc = doc.Object("TextDocument") as TextDocument;
+            var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
             if (textDoc == null)
             {
                 return changedFiles;
@@ -2359,7 +2556,7 @@ public class VisualStudioService : IVisualStudioService
                 return null;
             }
 
-            var textDoc = doc.Object("TextDocument") as TextDocument;
+            var textDoc = doc.Object("EnvDTETextDocument") as EnvDTETextDocument;
             if (textDoc == null)
             {
                 return null;

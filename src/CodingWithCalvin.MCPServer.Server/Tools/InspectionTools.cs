@@ -19,13 +19,28 @@ public class InspectionTools
     }
 
     [McpServerTool(Name = "debugger_evaluate", ReadOnly = true)]
-    [Description("Evaluate an expression in the current debug context and return its value and type.")]
+    [Description("Evaluate an expression in the current debug context. The debugger must be in break mode (paused at a breakpoint).")]
     public async Task<string> EvaluateExpressionAsync(
-        [Description("The expression to evaluate (e.g., variable name, 'obj.Property', 'x + y')")] string expression
-    )
+        [Description("The expression to evaluate (e.g., 'myVariable', 'x + y', 'obj.Property').")] string expression)
     {
         var result = await _rpcClient.EvaluateExpressionAsync(expression);
-        return JsonSerializer.Serialize(result, _jsonOptions);
+        
+        if (!result.IsValid || !string.IsNullOrEmpty(result.ErrorMessage))
+        {
+            return JsonSerializer.Serialize(new 
+            { 
+                success = false, 
+                error = result.ErrorMessage ?? "Failed to evaluate expression. Ensure debugger is in break mode." 
+            }, _jsonOptions);
+        }
+        
+        return JsonSerializer.Serialize(new 
+        { 
+            success = true, 
+            expression = result.Expression,
+            value = result.Value, 
+            type = result.Type 
+        }, _jsonOptions);
     }
 
     [McpServerTool(Name = "debugger_get_locals", ReadOnly = true)]
@@ -52,7 +67,21 @@ public class InspectionTools
     )
     {
         var result = await _rpcClient.InspectVariableAsync(variableName, depth);
-        return JsonSerializer.Serialize(result, _jsonOptions);
+        
+        if (!result.IsValid)
+        {
+            return JsonSerializer.Serialize(new 
+            { 
+                success = false, 
+                error = $"Failed to inspect variable '{variableName}'. Ensure debugger is in break mode and the variable exists in the current context." 
+            }, _jsonOptions);
+        }
+        
+        return JsonSerializer.Serialize(new 
+        { 
+            success = true,
+            variable = result
+        }, _jsonOptions);
     }
 
     [McpServerTool(Name = "debugger_set_variable")]
